@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  body {
+    @apply bg-ink-950 text-ink-100 antialiased;
+  }
+  ::selection {
+    @apply bg-brass-600/40 text-ink-100;
+  }
+  /* Visible keyboard focus everywhere, not just on inputs that opt in. */
+  :focus-visible {
+    outline: 2px solid theme("colors.brass.400");
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  textarea::-webkit-scrollbar,
+  main::-webkit-scrollbar {
+    width: 8px;
+  }
+  textarea::-webkit-scrollbar-thumb,
+  main::-webkit-scrollbar-thumb {
+    @apply bg-ink-700 rounded-full;
+  }
+  textarea::-webkit-scrollbar-track,
+  main::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

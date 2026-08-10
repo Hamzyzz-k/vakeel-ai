@@ -1,0 +1,80 @@
+"""
+Document upload + analysis endpoint (spec section 21).
+
+Deliberately no LLM call in this phase: extraction is PyMuPDF, topic
+detection and missing-clause flagging are regex, and "relevant law" is the
+same deterministic retrieval the chat pipeline uses. This means there is no
+prompt-injection surface to defend here at all (spec section 39's concern
+about documents containing "ignore previous instructions"-style text) --
+not because it was mitigated, but because no LLM ever sees the uploaded
+text in this phase. If a future phase adds LLM-based clause explanation,
+that prompt must follow the same evidence-not-instruction framing already
+used in app/pipeline/graph.py's REASONING_PROMPT_TEMPLATE.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from app.api.chat import _db_lock, _get_repo
+from app.documents.analyzer import analyze_document
+from app.documents.extractor import extract_document
+
+router = APIRouter(prefix="/api/v1", tags=["documents"])
+
+_MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB -- generous for a contract/notice, not for a mistake
+_ALLOWED_SUFFIXES = (".pdf", ".txt")
+
+
+class ClauseOut(BaseModel):
+    number: int | None
+    heading: str | None
+    text: str
+    detected_topics: list[str]
+    relevant_source_ids: list[str]
+
+
+class DocumentAnalysisOut(BaseModel):
+    filename: str
+    n_pages: int
+    n_clauses: int
+    detected_topics: list[str]
+    missing_topics: list[str]
+    clauses: list[ClauseOut]
+
+
+@router.post("/documents/upload", response_model=DocumentAnalysisOut)
+async def upload_document(file: UploadFile = File(...)) -> DocumentAnalysisOut:
+    filename = file.filename or "upload"
+    if not filename.lower().endswith(_ALLOWED_SUFFIXES):
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(_ALLOWED_SUFFIXES)}")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds {_MAX_UPLOAD_BYTES // (1024*1024)}MB limit")
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        doc = extract_document(file_bytes, filename)
+    except Exception as exc:  # noqa: BLE001 -- a corrupt/unreadable upload is a client error, not a crash
+        raise HTTPException(status_code=422, detail=f"Could not extract text from this file: {exc}") from exc
+
+    if not doc.full_text.strip():
+        raise HTTPException(status_code=422, detail="No extractable text found -- this may be a scanned image PDF (OCR is not supported in this phase)")
+
+    with _db_lock:  # see app/api/chat.py's _db_lock docstring
+        analysis = analyze_document(doc, _get_repo())
+
+    return DocumentAnalysisOut(
+        filename=filename,
+        n_pages=analysis.n_pages,
+        n_clauses=analysis.n_clauses,
+        detected_topics=analysis.detected_topics,
+        missing_topics=analysis.missing_topics,
+        clauses=[
+            ClauseOut(number=c.number, heading=c.heading, text=c.text,
+                      detected_topics=c.detected_topics, relevant_source_ids=c.relevant_source_ids)
+            for c in analysis.clauses
+        ],
+    )

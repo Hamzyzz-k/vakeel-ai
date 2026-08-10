@@ -1,0 +1,30 @@
+# Core API
+fastapi>=0.115
+uvicorn[standard]>=0.32
+
+# LLM clients
+google-genai>=0.3
+ollama>=0.4
+
+# Retrieval / ML (CPU deps here; torch is installed separately with the
+# CUDA-specific index URL, so it's deliberately not pinned in this file --
+# `pip install torch` from here would grab the CPU-only build)
+# BM25 comes from SQLite's built-in FTS5 bm25() function (app/corpus/schema.py),
+# not a separate library -- no rank-bm25 needed.
+sentence-transformers>=3.3
+numpy>=2.1
+networkx>=3.4
+
+# Document processing
+pymupdf>=1.24
+python-docx>=1.1
+
+# Data / validation
+pydantic>=2.9
+pandas>=2.2
+python-dotenv>=1.0
+python-multipart>=0.0.9
+
+# Testing
+pytest>=8.3
+httpx>=0.27
