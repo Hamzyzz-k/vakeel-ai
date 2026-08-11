@@ -27,6 +27,7 @@ backend/data/test_lease_agreement.pdf
 tasks/
 .claude/
 .impeccable/
+CLAUDE.md
 
 # OS / editor
 .DS_Store
