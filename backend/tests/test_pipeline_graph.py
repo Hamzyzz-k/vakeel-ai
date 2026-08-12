@@ -18,16 +18,27 @@ class StubLLM:
     twice per research-mode run (intake, then IRAC reasoning) -- distinguish
     them by call order, since run_intake always runs first in the pipeline."""
 
-    def __init__(self, intake_json: dict, answer_text: str = "", irac_json: dict | None = None):
+    def __init__(self, intake_json: dict, answer_text: str = "", irac_json: dict | None = None, irac_json_sequence: list[dict] | None = None):
         self.intake_json = intake_json
         self.answer_text = answer_text
+        # irac_json_sequence lets a test simulate the retry path: first call
+        # returns one response, the retry call (if triggered) returns the
+        # next. Falls back to the fixed irac_json for every call if no
+        # sequence is given.
         self.irac_json = irac_json
+        self.irac_json_sequence = irac_json_sequence
+        self._irac_call_count = 0
         self.calls: list[str] = []
 
     def generate_json(self, prompt: str, json_schema: dict, use_cache: bool = True):
         if "issue" in json_schema.get("properties", {}):
             self.calls.append("irac")
-            data = self.irac_json or {}
+            if self.irac_json_sequence is not None:
+                idx = min(self._irac_call_count, len(self.irac_json_sequence) - 1)
+                data = self.irac_json_sequence[idx]
+                self._irac_call_count += 1
+            else:
+                data = self.irac_json or {}
             return data, LLMResponse(text=json.dumps(data), provider="stub", model="stub", from_cache=False)
         self.calls.append("intake")
         return self.intake_json, LLMResponse(text=json.dumps(self.intake_json), provider="stub", model="stub", from_cache=False)
@@ -176,3 +187,59 @@ def test_run_query_research_mode_verifies_each_irac_section_independently(tmp_pa
     assert len(state.rejected_claims) == 1
     assert "RULE" in state.final_answer
     assert "COUNTERARGUMENT" not in state.final_answer  # its only sentence was rejected
+
+
+def test_run_query_research_mode_retries_when_model_omits_all_citations(tmp_path):
+    """Real, measured local-model failure mode: substantive content in
+    every IRAC field but no [Sn] tag anywhere, so every sentence is
+    correctly treated as uncited framing rather than a claim -- both
+    verified_claims and rejected_claims come back empty even though the
+    model clearly engaged. One bounded retry with a stronger reminder
+    should recover a properly-cited answer."""
+    repo = make_repo(tmp_path)
+    uncited_response = {
+        "issue": "Whether a landlord must return a security deposit within a reasonable time.",
+        "rule": "A landlord shall return any security deposit collected from the tenant within a reasonable time.",
+        "authorities": "",
+        "application": "",
+        "counterargument": "",
+        "conclusion": "",
+    }
+    cited_response = {
+        "issue": "Whether a landlord must return a security deposit within a reasonable time.",
+        "rule": "A landlord shall return any security deposit collected from the tenant within a reasonable time [S1].",
+        "authorities": "",
+        "application": "",
+        "counterargument": "",
+        "conclusion": "",
+    }
+    llm = StubLLM(
+        intake_json={"jurisdiction_country": "India", "jurisdiction_state": None,
+                     "legal_domain": "consumer", "issues": [], "search_queries": ["security deposit landlord"]},
+        irac_json_sequence=[uncited_response, cited_response],
+    )
+    state = run_query("Must my landlord return my deposit?", repo, llm, mode="research")
+
+    assert llm.calls.count("irac") == 2  # first attempt, then the retry
+    assert state.abstained is False
+    assert len(state.verified_claims) == 1
+    assert "[S1]" in state.final_answer
+
+
+def test_run_query_research_mode_does_not_retry_when_first_attempt_already_produced_claims(tmp_path):
+    """The retry is bounded to exactly the "zero total claims" case -- a
+    normal successful (or partially-rejected) first attempt must not
+    trigger a second, wasted LLM call."""
+    repo = make_repo(tmp_path)
+    llm = StubLLM(
+        intake_json={"jurisdiction_country": "India", "jurisdiction_state": None,
+                     "legal_domain": "consumer", "issues": [], "search_queries": ["security deposit landlord"]},
+        irac_json={
+            "issue": "Whether a landlord must return a security deposit within a reasonable time.",
+            "rule": "A landlord shall return any security deposit collected from the tenant within a reasonable time [S1].",
+            "authorities": "", "application": "", "counterargument": "", "conclusion": "",
+        },
+    )
+    run_query("Must my landlord return my deposit?", repo, llm, mode="research")
+
+    assert llm.calls.count("irac") == 1
