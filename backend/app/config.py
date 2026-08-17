@@ -41,7 +41,11 @@ class Settings:
     deploy_mode: str = field(default_factory=lambda: os.environ.get("DEPLOY_MODE", "LOCAL"))
 
     gemini_api_key: str | None = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY"))
-    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
+    # gemini-2.5-flash was retired from the legacy generateContent path for
+    # new callers (confirmed live, 2026-08-17: 404 NOT_FOUND, "no longer
+    # available to new users"). gemini-3.6-flash is the current stable
+    # balanced model on the Interactions API this provider now calls.
+    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-3.6-flash"))
 
     ollama_host: str = field(default_factory=lambda: os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
     ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "llama3.2:3b"))

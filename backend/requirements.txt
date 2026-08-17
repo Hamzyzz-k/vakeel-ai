@@ -3,7 +3,10 @@ fastapi>=0.115
 uvicorn[standard]>=0.32
 
 # LLM clients
-google-genai>=0.3
+# Gemini is called directly over HTTP against the Interactions API
+# (app/llm/provider.py) -- the google-genai SDK's generate_content() hits
+# the legacy endpoint, which returns 404 for new callers as of 2026-08-17.
+# httpx below (already needed for tests) covers the HTTP client need.
 ollama>=0.4
 
 # Retrieval / ML (CPU deps here; torch is installed separately with the

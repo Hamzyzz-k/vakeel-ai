@@ -29,6 +29,37 @@ class AllProvidersFailed(RuntimeError):
     in a legal system is worse than an explicit failure."""
 
 
+GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+
+def _extract_interactions_text(data: dict) -> str:
+    """The Interactions API returns a `steps` timeline rather than the legacy
+    `candidates` array; SDKs/some responses expose an `output_text`
+    convenience field. The REST envelope isn't pinned down precisely in the
+    public docs, so pull text out defensively: convenience field, then the
+    steps timeline, then fall back to the legacy generateContent shape (in
+    case the endpoint is ever switched back)."""
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    parts = [
+        block["text"]
+        for step in (data.get("steps") or [])
+        for block in (step.get("content") or [])
+        if isinstance(block.get("text"), str)
+    ]
+    joined = "".join(parts)
+    if joined.strip():
+        return joined
+
+    candidates = data.get("candidates") or []
+    if candidates:
+        legacy_parts = candidates[0].get("content", {}).get("parts") or []
+        return "".join(p.get("text", "") for p in legacy_parts)
+    return ""
+
+
 @dataclass
 class LLMResponse:
     text: str
@@ -41,7 +72,6 @@ class LLMProvider:
     def __init__(self, cache: LLMCache | None = None, provider_order: tuple[str, ...] | None = None):
         self.cache = cache if cache is not None else LLMCache()
         self.provider_order = provider_order or settings.llm_provider_order
-        self._gemini_client = None
         self._ollama_client = None
 
     # -- provider implementations ----------------------------------------
@@ -49,22 +79,25 @@ class LLMProvider:
     def _call_gemini(self, prompt: str, json_schema: dict | None) -> str:
         if not settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
-        if self._gemini_client is None:
-            from google import genai
 
-            self._gemini_client = genai.Client(api_key=settings.gemini_api_key)
+        import httpx
 
-        config: dict = {}
+        payload: dict = {"model": settings.gemini_model, "input": prompt}
         if json_schema is not None:
-            config["response_mime_type"] = "application/json"
-            config["response_schema"] = json_schema
+            payload["response_format"] = {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": json_schema,
+            }
 
-        response = self._gemini_client.models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=config or None,
+        response = httpx.post(
+            GEMINI_INTERACTIONS_ENDPOINT,
+            headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
+            json=payload,
+            timeout=60.0,
         )
-        return response.text or ""
+        response.raise_for_status()
+        return _extract_interactions_text(response.json())
 
     def _call_ollama(self, prompt: str, json_schema: dict | None) -> str:
         if self._ollama_client is None:

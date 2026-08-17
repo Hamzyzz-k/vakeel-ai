@@ -11,7 +11,7 @@ services:
       - key: DEPLOY_MODE
         value: CLOUD
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.6-flash
       - key: USE_GPU
         value: "false"
       - key: GEMINI_API_KEY
