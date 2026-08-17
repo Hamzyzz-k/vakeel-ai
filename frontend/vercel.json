@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://REPLACE-WITH-RENDER-URL.onrender.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://vakeel-ai-backend.onrender.com/api/:path*" }
   ]
 }
