@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: vakeel-ai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python scripts/fetch_corpus.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: DEPLOY_MODE
+        value: CLOUD
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: USE_GPU
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORPUS_DB_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

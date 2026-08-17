@@ -51,6 +51,18 @@ class Settings:
     # 500 questions x 3 calls would burn the whole daily Gemini quota.
     llm_provider_order: tuple[str, ...] = ("gemini", "ollama")
 
+    # Comma-separated list; defaults to the Vite dev server only. Production
+    # (Vercel frontend calling this backend directly, e.g. during manual
+    # testing of the Render URL) adds its own origin via the CORS_ORIGINS
+    # env var rather than a hardcoded domain baked into this file.
+    cors_origins: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            o.strip() for o in os.environ.get(
+                "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+            ).split(",") if o.strip()
+        )
+    )
+
     use_gpu: bool = field(default_factory=lambda: _env_bool("USE_GPU", True))
     embedding_model: str = field(
         default_factory=lambda: os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
