@@ -28,6 +28,26 @@ def test_extract_labels_single_and_multiple():
     assert extract_labels("No citation here.") == []
 
 
+def test_verifier_splits_cited_sentences_when_model_omits_periods():
+    sources = [RetrievedSource(
+        label="S1", source_id="s1", title="Section 73",
+        text="A party suffering loss caused by breach is entitled to compensation.",
+        source_type="SECTION",
+    )]
+    state = make_state(
+        "Loss caused by breach is compensable [S1] A party suffering that loss may claim compensation [S1]",
+        sources,
+    )
+
+    verify_answer(state, use_nli=False)
+
+    assert len(state.verified_claims) == 2
+    assert state.final_answer == (
+        "Loss caused by breach is compensable [S1]. "
+        "A party suffering that loss may claim compensation [S1]."
+    )
+
+
 def test_strip_citations_removes_bracket_but_keeps_text():
     assert strip_citations("Interest is payable [S2].") == "Interest is payable."
 
@@ -94,13 +114,53 @@ def test_unrelated_claim_citing_real_source_is_rejected_on_support():
     assert state.rejected_claims[0].supported is False
 
 
-def test_uncited_sentence_is_kept_as_framing_not_a_claim():
+def test_uncited_sentence_is_removed_so_it_cannot_bypass_closed_set_verification():
     sources: list[RetrievedSource] = []
     state = make_state("Here is a summary of the applicable position.", sources)
     verify_answer(state, use_nli=False)
-    assert state.final_answer == "Here is a summary of the applicable position."
+    assert state.final_answer == ""
     assert state.verified_claims == []
-    assert state.rejected_claims == []
+    assert len(state.rejected_claims) == 1
+    assert state.rejected_claims[0].rejection_reason == "legal claim has no source citation"
+
+
+def test_low_word_overlap_is_not_treated_as_support_without_nli():
+    sources = [RetrievedSource(
+        label="S1", source_id="x", title="Unrelated provision",
+        text="A seller shall deliver goods according to the contract.", source_type="SECTION",
+    )]
+    state = make_state(
+        "The seller must refund the buyer within thirty days and pay compensation [S1].", sources
+    )
+    verify_answer(state, use_nli=False)
+
+    assert state.verified_claims == []
+    assert len(state.rejected_claims) == 1
+    assert state.rejected_claims[0].supported is False
+
+
+def test_invented_numeric_deadline_is_rejected_even_with_high_word_overlap():
+    sources = [RetrievedSource(
+        label="S1", source_id="x", title="Delivery provision",
+        text="The seller must deliver the goods within a reasonable time.", source_type="SECTION",
+    )]
+    state = make_state("The seller must deliver the goods within 30 days [S1].", sources)
+    verify_answer(state, use_nli=False)
+
+    assert state.verified_claims == []
+    assert len(state.rejected_claims) == 1
+
+
+def test_added_negation_cannot_reverse_the_source_rule():
+    sources = [RetrievedSource(
+        label="S1", source_id="x", title="Liability provision",
+        text="The seller is liable for loss caused by the breach.", source_type="SECTION",
+    )]
+    state = make_state("The seller is not liable for loss caused by the breach [S1].", sources)
+    verify_answer(state, use_nli=False)
+
+    assert state.verified_claims == []
+    assert len(state.rejected_claims) == 1
 
 
 def test_trace_records_verification_counts():

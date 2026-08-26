@@ -37,13 +37,19 @@ _CITATION_RE = re.compile(r"\[([Ss]\d+(?:\s*,\s*[Ss]\d+)*)\]")
 # ("v.", "No.", "Ors.", "s. 138") -- splitting there would orphan citations
 # from their claims and cause false rejections.
 _ABBREV = r"(?<!\bv)(?<!\bNo)(?<!\bOrs)(?<!\bAnr)(?<!\bs)(?<!\bSec)(?<!\bArt)"
-_SENTENCE_SPLIT_RE = re.compile(rf"{_ABBREV}\.\s+(?=[A-Z])")
+_SENTENCE_SPLIT_RE = re.compile(
+    rf"(?:{_ABBREV}\.\s+(?=[A-Z])|(?<=\])\s+(?=[A-Z]))"
+)
 
 # Below this lexical overlap a claim is not sent to the NLI model at all --
 # it cannot plausibly be supported. Above the high gate it is accepted
 # without NLI. Only the ambiguous middle band costs a model call.
 _LEXICAL_REJECT_BELOW = 0.08
 _LEXICAL_ACCEPT_ABOVE = 0.60
+# Production currently runs without NLI. In that mode, the old 0.08 cutoff
+# accepted claims sharing a single generic legal word with the source. Use a
+# conservative standalone gate until the NLI path has a labelled tuning set.
+_LEXICAL_ONLY_ACCEPT_ABOVE = 0.30
 _NLI_SUPPORT_THRESHOLD = 0.5
 
 _STOPWORDS = frozenset("""
@@ -134,19 +140,37 @@ def verify_claim(claim: str, evidence: str, use_nli: bool = True) -> tuple[bool,
     middle band. Returns (supported, score).
     """
     overlap = lexical_overlap(claim, evidence)
+    # High-impact factual markers must survive paraphrasing exactly. Word
+    # overlap alone can otherwise approve "30 days" from a section that
+    # never sets that deadline, or invert a duty by adding "not".
+    claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim))
+    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", evidence))
+    if not claim_numbers.issubset(evidence_numbers):
+        return False, overlap
+
+    claim_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", claim, re.IGNORECASE))
+    evidence_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", evidence, re.IGNORECASE))
+    if claim_has_negation and not evidence_has_negation:
+        return False, overlap
+
     if overlap < _LEXICAL_REJECT_BELOW:
         return False, overlap
     if overlap >= _LEXICAL_ACCEPT_ABOVE:
         return True, overlap
     if not use_nli:
-        return overlap >= _LEXICAL_REJECT_BELOW, overlap
+        return overlap >= _LEXICAL_ONLY_ACCEPT_ABOVE, overlap
     score = nli_entailment_score(claim, evidence)
     return score >= _NLI_SUPPORT_THRESHOLD, score
 
 
-def verify_text(text: str, by_label: dict, use_nli: bool = True) -> tuple[str, list[VerifiedClaim], list[VerifiedClaim]]:
+def verify_text(
+    text: str,
+    by_label: dict,
+    use_nli: bool = True,
+    allow_uncited: bool = False,
+) -> tuple[str, list[VerifiedClaim], list[VerifiedClaim]]:
     """
-    The verification core, independent of LegalQueryState. Both Consultant
+    The verification core, independent of LegalQueryState. Both Advice
     mode (one block of prose) and Research mode (six IRAC sections, verified
     separately so a bad Application doesn't sink an otherwise-good Rule) call
     this -- the guarantee (closed-set citation, existence + support checks)
@@ -162,10 +186,19 @@ def verify_text(text: str, by_label: dict, use_nli: bool = True) -> tuple[str, l
         labels = extract_labels(sentence)
         bare = strip_citations(sentence)
 
-        # A sentence with no citation makes no legal claim of its own
-        # (framing, transitions). Keep it, but never treat it as supported.
+        # Uncited prose is not assumed to be harmless framing. A fabricated
+        # case name or unsupported instruction can be written without an
+        # [Sn] tag, bypassing the closed-set guarantee if we display it.
         if not labels:
-            kept.append(bare)
+            if allow_uncited:
+                kept.append(bare)
+            else:
+                rejected.append(
+                    VerifiedClaim(
+                        sentence=bare, cited_labels=[], exists=False, supported=False,
+                        rejection_reason="legal claim has no source citation",
+                    )
+                )
             continue
 
         unknown = [lbl for lbl in labels if lbl not in by_label]
@@ -178,7 +211,11 @@ def verify_text(text: str, by_label: dict, use_nli: bool = True) -> tuple[str, l
             )
             continue
 
-        evidence = "\n".join(by_label[lbl].text for lbl in labels)
+        # Section/case identifiers often live in source metadata rather than
+        # the body text. Include the exact title in support verification so a
+        # correct claim such as "Section 73 provides..." is not rejected only
+        # because the chunk starts after its heading.
+        evidence = "\n".join(f"{by_label[lbl].title}\n{by_label[lbl].text}" for lbl in labels)
         supported, score = verify_claim(bare, evidence, use_nli=use_nli)
 
         claim = VerifiedClaim(
@@ -189,7 +226,11 @@ def verify_text(text: str, by_label: dict, use_nli: bool = True) -> tuple[str, l
         if supported:
             verified.append(claim)
             citation_text = ", ".join(labels)
-            kept.append(f"{bare} [{citation_text}]")
+            body = bare.rstrip()
+            punctuation = body[-1] if body and body[-1] in ".!?" else "."
+            if body and body[-1] in ".!?":
+                body = body[:-1].rstrip()
+            kept.append(f"{body} [{citation_text}]{punctuation}")
         else:
             rejected.append(claim)
 
@@ -210,7 +251,7 @@ IRAC_SECTION_HEADINGS = {
 def verify_irac(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState:
     """
     Research-mode counterpart to verify_answer. Verifies each IRAC section
-    independently -- via the same verify_text() core Consultant mode uses,
+    independently -- via the same verify_text() core Advice mode uses,
     so a fabricated authority is exactly as structurally impossible here as
     it is there -- then reassembles the surviving sentences into a headed
     IRAC report. Claims are aggregated into state.verified_claims /
@@ -227,7 +268,11 @@ def verify_irac(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState
         raw_section = state.irac_sections.get(key, "").strip()
         if not raw_section:
             continue
-        kept_text, verified, rejected = verify_text(raw_section, by_label, use_nli=use_nli)
+        # ISSUE may restate the user's question. All substantive IRAC fields
+        # must pass the same citation gate as Advice mode.
+        kept_text, verified, rejected = verify_text(
+            raw_section, by_label, use_nli=use_nli, allow_uncited=(key == "issue")
+        )
         state.verified_claims.extend(verified)
         state.rejected_claims.extend(rejected)
         if kept_text:

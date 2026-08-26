@@ -1,6 +1,6 @@
 """
-LLM provider with Gemini -> Ollama failover and a response cache in front
-of both.
+LLM provider with Gemini -> Groq -> Ollama failover and a response cache in
+front of all three.
 
 Failover is not a nicety here: the Gemini free tier is ~10 RPM / 1500 RPD
 (verified during planning), and a 429 mid-demo would otherwise end the
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 
 from app.config import settings
@@ -30,6 +31,7 @@ class AllProvidersFailed(RuntimeError):
 
 
 GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GROQ_CHAT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def _extract_interactions_text(data: dict) -> str:
@@ -73,6 +75,8 @@ class LLMProvider:
         self.cache = cache if cache is not None else LLMCache()
         self.provider_order = provider_order or settings.llm_provider_order
         self._ollama_client = None
+        self._gemini_client = None
+        self._groq_client = None
 
     # -- provider implementations ----------------------------------------
 
@@ -90,14 +94,105 @@ class LLMProvider:
                 "schema": json_schema,
             }
 
-        response = httpx.post(
-            GEMINI_INTERACTIONS_ENDPOINT,
-            headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
-            json=payload,
-            timeout=60.0,
-        )
-        response.raise_for_status()
-        return _extract_interactions_text(response.json())
+        if self._gemini_client is None:
+            self._gemini_client = httpx.Client(
+                timeout=httpx.Timeout(
+                    connect=10.0,
+                    read=settings.gemini_read_timeout,
+                    write=15.0,
+                    pool=10.0,
+                )
+            )
+
+        last_error: Exception | None = None
+        for attempt in range(settings.gemini_max_retries + 1):
+            try:
+                response = self._gemini_client.post(
+                    GEMINI_INTERACTIONS_ENDPOINT,
+                    headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if response.status_code == 429 or response.status_code >= 500:
+                    response.raise_for_status()
+                response.raise_for_status()
+                text = _extract_interactions_text(response.json())
+                if not text.strip():
+                    raise RuntimeError("Gemini returned an empty response")
+                return text
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                retryable_status = isinstance(exc, httpx.HTTPStatusError) and (
+                    exc.response.status_code == 429 or exc.response.status_code >= 500
+                )
+                if attempt >= settings.gemini_max_retries or (
+                    isinstance(exc, httpx.HTTPStatusError) and not retryable_status
+                ):
+                    raise
+                time.sleep(0.4 * (attempt + 1))
+        raise RuntimeError(f"Gemini request failed: {last_error}")
+
+    def _call_groq(self, prompt: str, json_schema: dict | None) -> str:
+        if not settings.groq_api_key:
+            raise RuntimeError("GROQ_API_KEY not set")
+
+        import httpx
+
+        payload: dict = {
+            "model": settings.groq_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        }
+        if json_schema is not None:
+            # The pipeline schemas intentionally leave most intake fields
+            # optional. Groq's strict json_schema mode requires every field
+            # to be listed as required, so JSON-object mode is the correct
+            # fit here; generate_json still validates parsing afterward.
+            payload["response_format"] = {"type": "json_object"}
+
+        if self._groq_client is None:
+            self._groq_client = httpx.Client(
+                timeout=httpx.Timeout(
+                    connect=10.0,
+                    read=settings.groq_read_timeout,
+                    write=15.0,
+                    pool=10.0,
+                )
+            )
+
+        last_error: Exception | None = None
+        for attempt in range(settings.groq_max_retries + 1):
+            try:
+                response = self._groq_client.post(
+                    GROQ_CHAT_ENDPOINT,
+                    headers={
+                        "Authorization": f"Bearer {settings.groq_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                choices = response.json().get("choices") or []
+                text = choices[0].get("message", {}).get("content", "") if choices else ""
+                if not isinstance(text, str) or not text.strip():
+                    raise RuntimeError("Groq returned an empty response")
+                return text
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                retryable_status = isinstance(exc, httpx.HTTPStatusError) and (
+                    exc.response.status_code == 429 or exc.response.status_code >= 500
+                )
+                if attempt >= settings.groq_max_retries or (
+                    isinstance(exc, httpx.HTTPStatusError) and not retryable_status
+                ):
+                    raise
+                retry_after = 0.0
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        retry_after = min(2.0, float(exc.response.headers.get("retry-after", "0")))
+                    except ValueError:
+                        retry_after = 0.0
+                time.sleep(max(retry_after, 0.3 * (attempt + 1)))
+        raise RuntimeError(f"Groq request failed: {last_error}")
 
     def _call_ollama(self, prompt: str, json_schema: dict | None) -> str:
         if self._ollama_client is None:
@@ -123,7 +218,12 @@ class LLMProvider:
         errors: list[str] = []
 
         for provider in self.provider_order:
-            model = settings.gemini_model if provider == "gemini" else settings.ollama_model
+            models = {
+                "gemini": settings.gemini_model,
+                "groq": settings.groq_model,
+                "ollama": settings.ollama_model,
+            }
+            model = models.get(provider, provider)
 
             if use_cache:
                 cached = self.cache.get(provider, model, prompt)
@@ -133,6 +233,8 @@ class LLMProvider:
             try:
                 if provider == "gemini":
                     text = self._call_gemini(prompt, json_schema)
+                elif provider == "groq":
+                    text = self._call_groq(prompt, json_schema)
                 elif provider == "ollama":
                     text = self._call_ollama(prompt, json_schema)
                 else:

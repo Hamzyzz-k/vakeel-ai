@@ -3,17 +3,34 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --ink: #273022;
+    --ink-muted: #68705f;
+    --olive: #56673f;
+    --olive-dark: #35432e;
+    --sage: #9fa98a;
+    --sage-soft: #e3e5d9;
+    --ivory: #f5f0e6;
+    --canvas: #f3eee4;
+    --paper: #fffdf8;
+    --taupe: #c8bea7;
+    --line: rgba(53, 67, 46, 0.14);
+    --line-strong: rgba(53, 67, 46, 0.24);
+  }
   html {
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   body {
-    @apply bg-white text-black antialiased;
+    @apply antialiased;
+    background: var(--canvas);
+    color: var(--ink);
   }
   ::selection {
-    @apply bg-black/15 text-black;
+    background: var(--sage);
+    color: var(--ink);
   }
   :focus-visible {
-    outline: 2px solid rgba(0, 0, 0, 0.4);
+    outline: 2px solid var(--olive);
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -21,10 +38,31 @@
     width: 8px;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.15);
+    background: var(--taupe);
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
+  }
+}
+
+.landing-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

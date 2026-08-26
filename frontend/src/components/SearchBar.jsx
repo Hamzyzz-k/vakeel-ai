@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { Plus, FileText, Send, Mic } from "lucide-react";
+import { FileText, PaperPlaneTilt, Plus } from "@phosphor-icons/react";
 
 export default function SearchBar({ input, setInput, mode, isTyping, onSend, onUploadDocument, textareaRef }) {
   const [showPlus, setShowPlus] = useState(false);
@@ -39,7 +39,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
   const hasInput = !!input.trim();
 
   return (
-    <div className="px-4 pb-5 pt-3 flex-shrink-0">
+    <div className="flex-shrink-0 border-t border-[var(--line)] bg-[var(--taupe)]/25 px-4 pb-5 pt-3">
       <div className="max-w-2xl mx-auto relative">
         <input
           ref={fileInputRef}
@@ -52,39 +52,39 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
         {showPlus && (
           <div
             ref={plusRef}
-            className="absolute bottom-full left-0 mb-2.5 bg-white border border-black/12 rounded-2xl shadow-2xl overflow-hidden z-20 w-48"
-            style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.12)" }}
+            className="absolute bottom-full left-0 mb-2.5 bg-[var(--paper)] border border-[var(--line)] rounded-2xl shadow-2xl overflow-hidden z-20 w-48"
+            style={{ boxShadow: "0 12px 36px rgba(53,67,46,0.14)" }}
           >
-            <div className="px-4 py-2.5 border-b border-black/6">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-black/35">Attach</p>
+            <div className="px-4 py-2.5 border-b border-[var(--line)]">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70">Attach</p>
             </div>
             <button
-              className="flex items-center gap-3 px-4 py-3 w-full text-left hover:bg-black/4 transition-colors group"
+              className="flex items-center gap-3 px-4 py-3 w-full text-left hover:bg-[var(--olive)]/[0.04] transition-colors group"
               onClick={() => fileInputRef.current?.click()}
             >
-              <div className="w-7 h-7 rounded-lg bg-black/6 flex items-center justify-center group-hover:bg-black/10 transition-colors">
-                <FileText className="w-3.5 h-3.5 text-black/60" />
+              <div className="w-7 h-7 rounded-lg bg-[var(--olive)]/[0.06] flex items-center justify-center group-hover:bg-[var(--olive)]/[0.10] transition-colors">
+                <FileText size={15} weight="bold" className="text-[var(--ink)]/65" />
               </div>
               <div className="min-w-0">
-                <span className="text-sm font-medium text-black/75 block">Document</span>
-                <span className="text-[10px] text-black/35">PDF or TXT, for clause analysis</span>
+                <span className="text-sm font-medium text-[var(--ink)]/80 block">Document</span>
+                <span className="text-[10px] text-[var(--ink-muted)]/70">PDF or TXT, for clause analysis</span>
               </div>
             </button>
           </div>
         )}
 
         <div
-          className="flex items-end gap-3 bg-white border border-black/14 rounded-3xl px-4 py-3 transition-all duration-200 focus-within:border-black/35"
-          style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05)" }}
+          className="flex items-end gap-3 bg-[var(--ivory)] border border-[var(--line-strong)] rounded-3xl px-4 py-3 transition-all duration-200 focus-within:border-[var(--olive)]"
+          style={{ boxShadow: "0 5px 22px rgba(53,67,46,0.09), 0 1px 3px rgba(53,67,46,0.08)" }}
         >
           <button
             onClick={() => setShowPlus((p) => !p)}
             className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
-              showPlus ? "bg-black text-white rotate-45" : "bg-black/7 text-black/45 hover:bg-black/14 hover:text-black/70"
+              showPlus ? "bg-[var(--olive-dark)] text-[var(--ivory)] rotate-45" : "bg-[var(--sage-soft)] text-[var(--ink-muted)] hover:bg-[var(--taupe)] hover:text-[var(--ink)]"
             }`}
             aria-label="Add attachment"
           >
-            <Plus className="w-4 h-4" />
+            <Plus size={16} weight="bold" />
           </button>
 
           <textarea
@@ -93,34 +93,25 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
             onInput={autoResize}
-            placeholder={`Ask your ${mode} anything...`}
+            placeholder={`Ask in ${mode} mode...`}
             rows={1}
-            className="flex-1 resize-none bg-transparent text-sm text-black placeholder:text-black/32 outline-none leading-relaxed overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-1"
+            className="flex-1 resize-none bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)]/60 outline-none leading-relaxed overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-1"
             style={{ minHeight: "24px", maxHeight: "128px" }}
           />
 
           <button
-            onClick={hasInput ? onSend : undefined}
-            disabled={isTyping}
+            onClick={onSend}
+            disabled={isTyping || !hasInput}
             className={`relative flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
-              hasInput ? "bg-black hover:opacity-75" : "bg-transparent text-black/45 hover:bg-black/8 hover:text-black/70"
+              hasInput ? "bg-[var(--olive)] hover:bg-[var(--olive-dark)] active:scale-[0.96]" : "bg-[var(--sage-soft)] text-[var(--ink-muted)]/40 cursor-not-allowed"
             }`}
-            aria-label={hasInput ? "Send message" : "Voice input"}
+            aria-label="Send message"
           >
-            <Send
-              className={`w-3.5 h-3.5 text-white absolute transition-all duration-200 ${
-                hasInput ? "opacity-100 scale-100" : "opacity-0 scale-75"
-              }`}
-            />
-            <Mic
-              className={`w-4 h-4 absolute transition-all duration-200 ${
-                hasInput ? "opacity-0 scale-75" : "opacity-100 scale-100"
-              }`}
-            />
+            <PaperPlaneTilt size={15} weight="fill" className={hasInput ? "text-white" : "text-[var(--ink-muted)]/50"} />
           </button>
         </div>
 
-        <p className="text-center text-[10px] text-black/22 mt-2 leading-relaxed">
+        <p className="text-center text-[10px] text-[var(--ink-muted)]/65 mt-2 leading-relaxed">
           Vakeel AI provides general legal information, not legal advice. Consult a licensed attorney for your situation.
         </p>
       </div>

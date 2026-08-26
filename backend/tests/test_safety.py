@@ -1,4 +1,5 @@
 from app.pipeline.safety import (
+    assess_corpus_coverage,
     build_evidence_block,
     should_abstain,
     apply_safety_checks,
@@ -11,6 +12,28 @@ def test_abstains_when_no_sources_retrieved():
     abstain, reason = should_abstain(state)
     assert abstain is True
     assert "No relevant" in reason
+
+
+def test_tenancy_question_is_rejected_as_a_corpus_gap():
+    state = LegalQueryState(user_query="My landlord will not return my security deposit")
+    state.legal_domain = "contract"
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is False
+    assert "tenancy" in reason
+    assert state.coverage["status"] == "unsupported"
+
+
+def test_loaded_contract_topic_passes_coverage_gate():
+    state = LegalQueryState(user_query="What compensation follows a breach of contract?")
+    state.legal_domain = "contract"
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is True
+    assert reason is None
+    assert state.coverage["status"] == "supported"
 
 
 def test_abstains_when_model_refuses_despite_evidence():

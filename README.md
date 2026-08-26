@@ -1,18 +1,23 @@
 # Vakeel AI
 
-A citation-verified legal research assistant for Indian law. It answers legal
-questions using retrieval-augmented generation over Indian statutes and
-Supreme Court judgments, and it cannot cite anything it wasn't actually given
+A citation-verified legal research assistant for Indian law. Its live product
+answers use retrieval-augmented generation over four Indian statutes; Supreme
+Court judgments are currently kept in a separate evaluation corpus. It cannot cite anything it wasn't actually given
 evidence for — every citation is checked against the retrieved sources before
 it reaches the user, so a fabricated case or section is structurally
 impossible rather than merely detected after the fact.
 
-Runs entirely locally and for free: SQLite for storage, a local Ollama model
-for generation, and a Gemini free-tier fallback if you want it.
+Uses SQLite locally and supports a free-provider chain for generation:
+Gemini, then Groq, then local Ollama. If every model provider is unavailable,
+the deterministic source-only fallback still returns verified statute text.
+
+If neither provider is configured, the app remains usable in a clearly
+labelled source-only mode that returns exact, citation-verified statutory
+extracts instead of pretending it generated tailored analysis.
 
 ## What it does
 
-- **Consultant mode** — plain-language answers to legal questions, grounded in
+- **Advice mode** — plain-language answers to legal questions, grounded in
   retrieved statute and case text.
 - **Research mode** — IRAC-structured research notes (Issue / Rule /
   Authorities / Application / Counterargument / Conclusion), with each section
@@ -21,11 +26,13 @@ for generation, and a Gemini free-tier fallback if you want it.
 - **Closed-set citation verification** — the model only ever sees pre-labelled
   retrieved sources (`[S1]`, `[S2]`, ...) and can only cite those labels.
   Every citation is checked for (a) existence in the retrieved set and (b)
-  whether the cited text actually supports the claim, using a lexical-overlap
-  gate with an NLI fallback for ambiguous cases.
-- **Hybrid retrieval** — BM25 (SQLite FTS5) and vector search (bge-small
-  embeddings) combined with Reciprocal Rank Fusion, then reranked with a
-  cross-encoder.
+  whether the cited text actually supports the claim, using a conservative
+  lexical gate in production. An NLI fallback exists but remains disabled
+  until it is tuned against labelled legal claims.
+- **Domain-scoped retrieval** — the live path combines chunk-level BM25 and
+  persisted vector search, fuses the rankings with Reciprocal Rank Fusion,
+  and applies deterministic lexical reranking. Explicit Act/section, IPC/BNS,
+  and high-confidence statutory concept routes run before fuzzy retrieval.
 - **Citation graph** — tracks CITES / FOLLOWS / OVERRULES / DISTINGUISHES
   relationships between judgments and flags conflicting authorities, using
   court hierarchy, date, and bench strength to determine which one is
@@ -108,7 +115,7 @@ React frontend (Vite + Tailwind)
 FastAPI backend
         │
         ├── Intake (LLM call) — jurisdiction, domain, search queries
-        ├── Retrieval — BM25 + vector search → RRF fusion → rerank
+        ├── Retrieval — domain-scoped BM25 → RRF across query rewrites
         ├── Reasoning (LLM call) — cited answer from retrieved evidence
         ├── Verification — closed-set citation checking (no LLM)
         ├── Conflict detection — citation graph (no LLM)
@@ -118,7 +125,8 @@ FastAPI backend
 SQLite (corpus, chunks, citations, eval data, LLM response cache)
 ```
 
-Three LLM calls per query, not ten agent hops — everything that can be
+Two LLM calls per normal query (plus one bounded retry in Research mode when
+the model omits every citation), not ten agent hops — everything that can be
 deterministic (retrieval, citation verification, evidence scoring, conflict
 detection) is deterministic code, not another model call. The full run is
 auditable through a single state object that every step appends to.
@@ -131,7 +139,7 @@ PyMuPDF, pytest
 
 **Frontend:** React, Vite, Tailwind CSS
 
-**LLM:** local Ollama model, with Gemini free-tier as an optional fallback
+**LLM:** Gemini → Groq (`openai/gpt-oss-120b`) → local Ollama → source-only fallback
 
 ## Running it
 
@@ -149,9 +157,13 @@ npm install
 npm run dev
 ```
 
-Copy `.env.example` to `.env` and fill in a `GEMINI_API_KEY` if you want the
-Gemini fallback; it works with just a local Ollama model otherwise. Then open
-`http://localhost:5173`.
+Copy `.env.example` to `.env`. Add `GEMINI_API_KEY` and/or `GROQ_API_KEY`; the
+default order is `gemini,groq,ollama`, configurable through
+`LLM_PROVIDER_ORDER`. Then open `http://localhost:5173`.
+
+Production environment variables, separate frontend/backend deployment steps,
+security headers, and the Docker corpus build are documented in
+[`HOSTING.md`](HOSTING.md).
 
 To rebuild the corpus from scratch, the ingestion scripts are under
 `backend/app/ingest/` — statute PDFs are fetched from India Code, and the
@@ -159,9 +171,13 @@ AILA evaluation set is loaded from its own archive.
 
 ## Known limitations
 
-- No tenancy/rent-control law is loaded, so questions about landlord-tenant
-  disputes retrieve the closest available statutes rather than anything
-  squarely on point — a corpus coverage gap, not a retrieval bug.
+- No tenancy/rent-control law is loaded, so landlord-tenant questions are
+  explicitly refused rather than matched to a loosely related statute. The
+  same coverage gate handles several other clearly unsupported areas such as
+  family, labour, constitutional, property, and tax law.
+- Cross-encoder reranking remains optional because its Windows CPU startup
+  cost is too high for the default local demo; the deterministic lexical
+  reranker is the production baseline.
 - The citation graph currently has real edges only over the evaluation
   corpus; conflict detection activates once the product corpus has judgments
   with extracted citations too.

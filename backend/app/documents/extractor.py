@@ -17,6 +17,9 @@ _CLAUSE_HEADER_RE = re.compile(
     r"^\s*(?:(\d{1,2})[.)]\s+|([A-Z][A-Z \-]{3,40}):?\s*$)",
 )
 
+_MAX_PDF_PAGES = 100
+_MAX_EXTRACTED_CHARACTERS = 1_000_000
+
 
 @dataclass
 class ExtractedClause:
@@ -37,7 +40,16 @@ def extract_pdf_text(file_bytes: bytes) -> tuple[str, int]:
 
     doc = pymupdf.open(stream=file_bytes, filetype="pdf")
     try:
-        pages = [page.get_text() for page in doc]
+        if len(doc) > _MAX_PDF_PAGES:
+            raise ValueError(f"PDF exceeds the {_MAX_PDF_PAGES}-page analysis limit")
+        pages = []
+        extracted_characters = 0
+        for page in doc:
+            text = page.get_text()
+            extracted_characters += len(text)
+            if extracted_characters > _MAX_EXTRACTED_CHARACTERS:
+                raise ValueError("PDF contains too much extracted text to analyze safely")
+            pages.append(text)
         return "\n\n".join(pages), len(doc)
     finally:
         doc.close()

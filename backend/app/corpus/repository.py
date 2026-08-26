@@ -142,6 +142,37 @@ class SQLiteCorpusRepository:
             ).fetchone()
         return self._source_cache[source_id]
 
+    def find_statute_section(self, act_name: str, section_no: str, corpus: str = "product") -> sqlite3.Row | None:
+        """Exact Act/section lookup for explicit user references."""
+        return self._conn().execute(
+            """
+            SELECT * FROM legal_sources
+            WHERE corpus = ? AND source_type = 'SECTION'
+              AND lower(act_name) = lower(?) AND upper(section_no) = upper(?)
+            LIMIT 1
+            """,
+            (corpus, act_name, section_no),
+        ).fetchone()
+
+    def get_chunks_with_sources(self, chunk_ids: Iterable[str]) -> list[sqlite3.Row]:
+        """Bulk chunk lookup with source metadata, preserving caller order."""
+        ids = list(dict.fromkeys(chunk_ids))
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn().execute(
+            f"""
+            SELECT lc.id AS chunk_id, lc.chunk_text, lc.section, lc.paragraph,
+                   ls.*
+            FROM legal_chunks lc
+            JOIN legal_sources ls ON ls.id = lc.source_id
+            WHERE lc.id IN ({placeholders})
+            """,
+            ids,
+        ).fetchall()
+        by_id = {row["chunk_id"]: row for row in rows}
+        return [by_id[chunk_id] for chunk_id in ids if chunk_id in by_id]
+
     def get_source_types(self, source_ids: Iterable[str]) -> dict[str, str]:
         """Bulk source_type lookup -- one query instead of N get_source calls."""
         ids = list(source_ids)
@@ -165,7 +196,7 @@ class SQLiteCorpusRepository:
 
     def bm25_search(
         self, query: str, corpus: str | None = None, source_type: str | None = None,
-        limit: int = 20, roles: list[str] | None = None,
+        limit: int = 20, roles: list[str] | None = None, domain: str | None = None,
     ) -> list[sqlite3.Row]:
         """FTS5 BM25 search over chunks, optionally scoped to a corpus,
         source_type, and/or a set of rhetorical_role values (Phase 4 / RQ5)."""
@@ -184,6 +215,9 @@ class SQLiteCorpusRepository:
         if source_type:
             sql += " AND ls.source_type = ?"
             params.append(source_type)
+        if domain:
+            sql += " AND ls.domain = ?"
+            params.append(domain)
         if roles:
             sql += f" AND lc.rhetorical_role IN ({','.join('?' for _ in roles)})"
             params.extend(roles)

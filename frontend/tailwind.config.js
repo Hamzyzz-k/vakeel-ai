@@ -4,8 +4,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["DM Sans", "ui-sans-serif", "system-ui", "sans-serif"],
-        serif: ["Playfair Display", "ui-serif", "Georgia", "serif"],
+        sans: ["Outfit", "Segoe UI Variable", "Segoe UI", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["DM Mono", "Cascadia Mono", "ui-monospace", "monospace"],
       },
     },
   },

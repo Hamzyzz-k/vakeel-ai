@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-Mode = Literal["consultant", "research"]
+Mode = Literal["advice", "research"]
 
 
 @dataclass
@@ -33,6 +33,7 @@ class RetrievedSource:
     section_no: str | None = None
     act_name: str | None = None
     retrieval_score: float | None = None
+    retrieval_method: str = "bm25"
 
 
 @dataclass
@@ -56,7 +57,7 @@ class TraceEvent:
 @dataclass
 class LegalQueryState:
     user_query: str
-    mode: Mode = "consultant"
+    mode: Mode = "advice"
 
     # -- intake (LLM call 1) ---------------------------------------------
     jurisdiction: dict[str, Any] = field(default_factory=lambda: {"country": "India", "state": None})
@@ -65,6 +66,10 @@ class LegalQueryState:
     facts: list[str] = field(default_factory=list)
     missing_information: list[str] = field(default_factory=list)
     search_queries: list[str] = field(default_factory=list)
+    # Honest product-scope signal. The live product corpus is intentionally
+    # smaller than "Indian law" as a whole, so unsupported areas must be
+    # identified before retrieval can substitute a merely similar Act.
+    coverage: dict[str, Any] = field(default_factory=dict)
     # Phase 9 (spec section 57): populated when the query references an IPC
     # 1860 section this project has a verified BNS 2023 mapping for. See
     # app/legal/ipc_bns_mapping.py and app/legal/query_bridge.py.
@@ -76,6 +81,8 @@ class LegalQueryState:
     # -- reasoning (LLM call 2) ------------------------------------------
     raw_answer: str = ""
     counterarguments: list[str] = field(default_factory=list)
+    generation_mode: str = "llm"
+    provider_error: str | None = None
     # Research mode only (spec section 18's IRAC structure): raw text per
     # section, pre-verification. Populated instead of raw_answer when
     # mode == "research" -- see app/pipeline/graph.py's run_reasoning.

@@ -57,6 +57,7 @@ def bm25_search_documents(
     limit_docs: int = 50,
     chunk_pool: int = 300,
     roles: list[str] | None = None,
+    domain: str | None = None,
 ) -> list[str]:
     """Returns a ranked list of source_ids, best first. `roles`, if given,
     restricts candidate chunks to those with a rhetorical_role in the list
@@ -64,7 +65,10 @@ def bm25_search_documents(
     fts_query = sanitize_fts5_query(query_text)
     if not fts_query:
         return []
-    rows = repo.bm25_search(fts_query, corpus=corpus, source_type=source_type, limit=chunk_pool, roles=roles)
+    rows = repo.bm25_search(
+        fts_query, corpus=corpus, source_type=source_type,
+        limit=chunk_pool, roles=roles, domain=domain,
+    )
     best_per_source: dict[str, float] = {}
     for row in rows:
         sid = row["source_id"]
@@ -73,3 +77,23 @@ def bm25_search_documents(
             best_per_source[sid] = score
     ranked = sorted(best_per_source.items(), key=lambda kv: kv[1])
     return [sid for sid, _ in ranked[:limit_docs]]
+
+
+def bm25_search_chunks(
+    repo: SQLiteCorpusRepository,
+    query_text: str,
+    corpus: str,
+    limit_chunks: int = 50,
+    domain: str | None = None,
+) -> list[str]:
+    """Return matched chunk ids directly instead of collapsing to sources."""
+    fts_query = sanitize_fts5_query(query_text)
+    if not fts_query:
+        return []
+    rows = repo.bm25_search(
+        fts_query,
+        corpus=corpus,
+        limit=limit_chunks,
+        domain=domain,
+    )
+    return [row["id"] for row in rows]

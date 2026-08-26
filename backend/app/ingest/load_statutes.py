@@ -53,7 +53,18 @@ STATUTES = [
 # under-split (Consumer Protection Act 2019 yielded 10 sections instead of
 # ~107) while over-splitting elsewhere (Contract Act gave 369 for an act with
 # 266 sections) by matching numbered sub-clauses and illustrations.
-_SECTION_RE = re.compile(r"^[ \t]*(\d{1,4})\.\s+", re.MULTILINE)
+# Some official PDFs collapse the space after the number (``3.Communication``).
+# Accept that form, but require a plausible title/body opener so decimal
+# numbers and page references do not become section candidates.
+_SECTION_RE = re.compile(r"^[ \t]*(?:\d+\[)?(\d{1,4})\.[ \t]*(?!\d)", re.MULTILINE)
+
+# India Code PDFs commonly put a complete "ARRANGEMENT OF SECTIONS" table
+# before the enacted text. Those entries look exactly like real section
+# headers, so a parser that starts at the first ``1.`` silently stores table
+# of contents labels instead of law. The enacted text begins after the Act's
+# "as follows" formula; choose the first section 1 after that anchor.
+_ENACTMENT_RE = re.compile(r"\bas\s+follows\b", re.IGNORECASE)
+_ARRANGEMENT_RE = re.compile(r"ARRANG(?:E)?MENT\s+OF\s+SECTIONS", re.IGNORECASE)
 
 # Gazette page furniture that lands mid-text during extraction and pollutes
 # both chunk text and section bodies.
@@ -72,15 +83,100 @@ def extract_pdf_text(path: Path) -> str:
     return _PAGE_NOISE_RE.sub("", text)
 
 
+def _line_after_number(full_text: str, match: re.Match) -> str:
+    end = full_text.find("\n", match.start())
+    line = full_text[match.start(): end if end >= 0 else len(full_text)]
+    return re.sub(r"^\s*(?:\d+\[)?\d{1,4}\.\s*", "", line).strip()
+
+
+def _normalise_title(text: str) -> str:
+    # The PDFs expose an em dash as either a real dash or U+FFFD. Everything
+    # after it is the section body, not the title used for matching against
+    # the arrangement table.
+    text = re.split(r"[—�]", text, maxsplit=1)[0].replace("-", "")
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    tokens = ["repeal" if token in {"rep", "repealed"} else token for token in tokens]
+    return " ".join(tokens)
+
+
+def _arrangement_guided_headers(
+    full_text: str,
+    arrangement_start: int,
+    body_start: int,
+) -> list[tuple[int, re.Match]]:
+    """Match enacted section headers to their titles in the arrangement.
+
+    Number alone is insufficient: footnotes such as ``16. Subs. by...`` can
+    appear before enacted section 16 and steal its number. The arrangement
+    provides a compact title index; matching both number and title avoids
+    table-of-contents entries *and* footnotes without Act-specific offsets.
+    """
+    toc_candidates = [m for m in _SECTION_RE.finditer(full_text, arrangement_start, body_start)]
+    toc_headers: list[tuple[int, str]] = []
+    expected = 1
+    for match in toc_candidates:
+        number = int(match.group(1))
+        if number != expected:
+            continue
+        title = _normalise_title(_line_after_number(full_text, match))
+        if title:
+            toc_headers.append((number, title))
+            expected += 1
+
+    chosen: list[tuple[int, re.Match]] = []
+    cursor = body_start
+    for number, toc_title in toc_headers:
+        # Amendment footnote markers are inconsistently extracted: ``1[16.``
+        # in one PDF, ``1151.`` (footnote 1 + section 151) in another. Search
+        # for the expected number with an optional numeric marker, then let
+        # the arrangement-title check disambiguate it from a real larger
+        # number such as section 1151.
+        expected_header = re.compile(
+            rf"^[ \t]*(?:\d+\[?)?{number}\.[ \t]*(?!\d)",
+            re.MULTILINE,
+        )
+        options = list(expected_header.finditer(full_text, cursor))
+        match = next(
+            (
+                candidate
+                for candidate in options
+                if _normalise_title(_line_after_number(full_text, candidate)).startswith(toc_title)
+                or toc_title.startswith(_normalise_title(_line_after_number(full_text, candidate)))
+                or (
+                    toc_title == "repeal"
+                    and re.search(r"\bRep\.", full_text[candidate.start(): candidate.start() + 400], re.IGNORECASE)
+                )
+            ),
+            None,
+        )
+        if match is None:
+            # A wrapped title can differ at the line break between the table
+            # and body. Fall back to strong token coverage, never number-only.
+            toc_tokens = set(toc_title.split())
+            scored = [
+                (
+                    len(toc_tokens & set(_normalise_title(_line_after_number(full_text, candidate)).split()))
+                    / max(1, len(toc_tokens)),
+                    candidate,
+                )
+                for candidate in options
+            ]
+            score, match = max(scored, default=(0.0, None), key=lambda item: item[0])
+            if score < 0.6:
+                break
+        chosen.append((number, match))
+        cursor = match.end()
+    return chosen
+
+
 def split_into_sections(full_text: str) -> list[tuple[str | None, str, str]]:
     """
     Returns [(section_no, section_title, section_text), ...].
 
-    Keeps only headers whose numbers form a monotonically increasing run
-    starting at 1. This is what separates a genuine section header from a
-    numbered sub-clause, an illustration, or a stray "10." inside prose:
-    real section numbering never goes backwards or repeats. Verified against
-    four acts whose true section counts are known.
+    Starts at the first section 1 after the enactment formula, then keeps
+    headers whose numbers form a monotonically increasing run. This prevents
+    the arrangement-of-sections table from being mistaken for substantive
+    law while retaining the existing defence against numbered sub-clauses.
 
     Falls back to one (None, "", full_text) entry if nothing matched, rather
     than silently dropping the document.
@@ -89,13 +185,27 @@ def split_into_sections(full_text: str) -> list[tuple[str | None, str, str]]:
     if not candidates:
         return [(None, "", full_text)]
 
-    kept = []
-    expected = 1
-    for m in candidates:
-        num = int(m.group(1))
-        if num == expected:
-            kept.append((num, m))
-            expected += 1
+    section_ones = [m for m in candidates if m.group(1) == "1"]
+    enactment_anchors = list(_ENACTMENT_RE.finditer(full_text))
+    first_enacted_section = section_ones[0] if section_ones else None
+    if section_ones and enactment_anchors:
+        first_enacted_section = next(
+            (section for section in section_ones if section.start() > enactment_anchors[0].end()),
+            section_ones[0],
+        )
+
+    arrangement = _ARRANGEMENT_RE.search(full_text)
+    if arrangement and first_enacted_section and arrangement.start() < first_enacted_section.start():
+        kept = _arrangement_guided_headers(full_text, arrangement.start(), first_enacted_section.start())
+    else:
+        candidates = [m for m in candidates if not first_enacted_section or m.start() >= first_enacted_section.start()]
+        kept = []
+        expected = 1
+        for m in candidates:
+            num = int(m.group(1))
+            if num == expected:
+                kept.append((num, m))
+                expected += 1
 
     if not kept:
         return [(None, "", full_text)]

@@ -30,7 +30,11 @@ def _get_embedder():
         from sentence_transformers import SentenceTransformer
 
         device = "cuda" if settings.use_gpu else "cpu"
-        _model_cache["embedder"] = SentenceTransformer(settings.embedding_model, device=device)
+        _model_cache["embedder"] = SentenceTransformer(
+            settings.embedding_model,
+            device=device,
+            local_files_only=True,
+        )
     return _model_cache["embedder"]
 
 

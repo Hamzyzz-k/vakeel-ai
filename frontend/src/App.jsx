@@ -1,18 +1,29 @@
 import { useState, useRef, useEffect } from "react";
-import { PanelLeftClose, PanelLeftOpen, Menu } from "lucide-react";
+import { List, SidebarSimple } from "@phosphor-icons/react";
+import { AnimatePresence, motion } from "motion/react";
 import Sidebar from "./components/Sidebar.jsx";
 import ModeToggle from "./components/ModeToggle.jsx";
 import SearchBar from "./components/SearchBar.jsx";
 import ChatArea from "./components/ChatArea.jsx";
+import BrandMark from "./components/BrandMark.jsx";
+import LandingPage from "./components/LandingPage.jsx";
 import { useIsMobile } from "./hooks/useIsMobile.js";
+import { apiUrl } from "./lib/api.js";
 
 const STORAGE_KEY = "vakeel_conversations_v1";
-const MODE_TO_API = { Adviser: "consultant", Lawyer: "research" };
+const MODE_TO_API = { Advice: "advice", Research: "research" };
 
 function loadConversations() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return parsed.map((conversation) => ({
+      ...conversation,
+      messages: (conversation.messages || []).map((message) => ({
+        ...message,
+        mode: message.mode === "Adviser" ? "Advice" : message.mode === "Lawyer" ? "Research" : message.mode,
+      })),
+    }));
   } catch {
     return [];
   }
@@ -33,12 +44,12 @@ function titleFromMessage(text) {
   return trimmed.length > 48 ? trimmed.slice(0, 48) + "…" : trimmed;
 }
 
-export default function App() {
+function Workspace({ onHome, initialMode = "Advice" }) {
   const isMobile = useIsMobile();
 
   const [conversations, setConversations] = useState(loadConversations);
   const [activeId, setActiveId] = useState(null);
-  const [mode, setMode] = useState("Adviser");
+  const [mode, setMode] = useState(initialMode);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   // Not `useState(!isMobile)` -- useIsMobile() reports false on its very
@@ -74,6 +85,17 @@ export default function App() {
     if (isMobile) setSidebarOpen(false);
   }
 
+  function deleteConversation(id) {
+    const conversation = conversations.find((item) => item.id === id);
+    if (!conversation) return;
+    if (!window.confirm(`Delete “${conversation.title}”? This cannot be undone.`)) return;
+    setConversations((prev) => prev.filter((item) => item.id !== id));
+    if (activeId === id) {
+      setActiveId(null);
+      setInput("");
+    }
+  }
+
   async function send(text) {
     const question = (text ?? input).trim();
     if (!question || isTyping) return;
@@ -101,7 +123,7 @@ export default function App() {
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     try {
-      const res = await fetch("/api/v1/chat", {
+      const res = await fetch(apiUrl("/api/v1/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, mode: MODE_TO_API[mode] }),
@@ -117,11 +139,14 @@ export default function App() {
         abstained: data.abstained,
         abstain_reason: data.abstain_reason,
         sources: data.sources,
-        evidence_score: data.evidence_score,
         jurisdiction: data.jurisdiction,
         legal_domain: data.legal_domain,
         conflicts: data.conflicts,
         temporal_notes: data.temporal_notes,
+        missing_information: data.missing_information,
+        coverage: data.coverage,
+        generation_mode: data.generation_mode,
+        provider_error: data.provider_error,
       };
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, aiMsg] }));
     } catch (err) {
@@ -171,7 +196,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/v1/documents/upload", { method: "POST", body: formData });
+      const res = await fetch(apiUrl("/api/v1/documents/upload"), { method: "POST", body: formData });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server responded ${res.status}`);
@@ -196,7 +221,7 @@ export default function App() {
   const activeTitle = activeConversation?.title ?? null;
 
   return (
-    <div className="flex h-screen w-full overflow-hidden font-sans">
+    <div className="flex h-[100dvh] min-h-[100dvh] w-full overflow-hidden font-sans bg-[var(--canvas)] text-[var(--ink)]">
       <Sidebar
         isOpen={sidebarOpen}
         isMobile={isMobile}
@@ -204,23 +229,26 @@ export default function App() {
         conversations={sidebarConversations}
         onNewChat={newChat}
         onSelectConversation={openConversation}
+        onDeleteConversation={deleteConversation}
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 bg-white">
-        <header className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-black/8 flex-shrink-0">
+      <div className="flex-1 flex flex-col min-w-0 bg-[var(--canvas)]">
+        <header className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-[var(--line)] bg-[color:var(--sage-soft)]/90 backdrop-blur flex-shrink-0">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSidebarOpen((p) => !p)}
-              className="p-2 rounded-lg hover:bg-black/5 transition-colors text-black/40 hover:text-black/70 flex-shrink-0"
+              className="p-2 rounded-lg hover:bg-[var(--sage-soft)] transition-colors text-[var(--ink-muted)] hover:text-[var(--ink)] flex-shrink-0"
               aria-label="Toggle sidebar"
             >
-              {isMobile ? <Menu className="w-5 h-5" /> : sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+              {isMobile ? <List size={20} weight="bold" /> : <SidebarSimple size={17} weight={sidebarOpen ? "fill" : "regular"} />}
             </button>
             {activeTitle ? (
-              <h1 className="text-sm font-medium text-black/60 truncate max-w-[120px] sm:max-w-xs">{activeTitle}</h1>
+              <h1 className="text-sm font-medium text-[var(--ink-muted)] truncate max-w-[120px] sm:max-w-xs">{activeTitle}</h1>
             ) : (
-              <span className="text-sm font-semibold text-black/80 tracking-tight font-serif">Vakeel AI</span>
+              <button type="button" onClick={onHome} aria-label="Back to Vakeel AI home" className="rounded-xl text-[var(--ink)]">
+                <BrandMark compact />
+              </button>
             )}
           </div>
 
@@ -249,5 +277,45 @@ export default function App() {
         />
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  const [workspaceOpen, setWorkspaceOpen] = useState(() => window.location.hash === "#workspace");
+  const [entryMode, setEntryMode] = useState("Advice");
+
+  useEffect(() => {
+    function syncRoute() {
+      setWorkspaceOpen(window.location.hash === "#workspace");
+    }
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
+
+  function openWorkspace(mode = "Advice") {
+    setEntryMode(mode);
+    window.history.pushState({}, "", "#workspace");
+    setWorkspaceOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openLanding() {
+    window.history.pushState({}, "", window.location.pathname);
+    setWorkspaceOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  return (
+    <AnimatePresence mode="wait">
+      {workspaceOpen ? (
+        <motion.div key="workspace" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <Workspace onHome={openLanding} initialMode={entryMode} />
+        </motion.div>
+      ) : (
+        <motion.div key="landing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <LandingPage onEnter={openWorkspace} />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

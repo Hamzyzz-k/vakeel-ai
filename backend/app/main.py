@@ -6,24 +6,36 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.research import router as research_router
 from app.config import settings
+from app.security import RateLimitMiddleware, SecurityHeadersMiddleware
 
 app = FastAPI(
     title="Vakeel AI",
     description="Agentic, citation-verified legal research assistant for Indian law.",
-    version="0.0.1-phase0",
+    version="0.2.0",
+    docs_url=None if settings.deploy_mode == "CLOUD" else "/docs",
+    redoc_url=None if settings.deploy_mode == "CLOUD" else "/redoc",
+    openapi_url=None if settings.deploy_mode == "CLOUD" else "/openapi.json",
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    RateLimitMiddleware,
+    max_requests=settings.rate_limit_requests,
+    window_seconds=settings.rate_limit_window_seconds,
+)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.trusted_hosts))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -37,5 +49,5 @@ def health() -> dict:
     return {
         "status": "ok",
         "deploy_mode": settings.deploy_mode,
-        "phase": "0 - recon and skeleton",
+        "version": app.version,
     }

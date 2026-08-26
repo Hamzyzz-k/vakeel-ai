@@ -7,11 +7,12 @@ tested independently of FastAPI (see tests/test_pipeline_graph.py).
 from __future__ import annotations
 
 import threading
+from typing import Literal
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.config import CORPUS_DB_PATH
+from app.config import CORPUS_DB_PATH, settings
 from app.corpus.repository import SQLiteCorpusRepository
 from app.llm.provider import LLMProvider
 from app.pipeline.graph import run_query
@@ -50,8 +51,8 @@ def _get_llm() -> LLMProvider:
 
 
 class ChatRequest(BaseModel):
-    message: str
-    mode: str = "consultant"
+    message: str = Field(min_length=2, max_length=4000)
+    mode: Literal["advice", "research"] = "advice"
 
 
 class SourceOut(BaseModel):
@@ -62,6 +63,7 @@ class SourceOut(BaseModel):
     section_no: str | None = None
     text: str | None = None  # the exact section/judgment text, not a summary
     url: str | None = None   # official source URL, when known (see app/ingest/load_statutes.py)
+    supports: list[str] = Field(default_factory=list)
 
 
 class ConflictOut(BaseModel):
@@ -83,6 +85,10 @@ class ChatResponse(BaseModel):
     safety_flags: list[str]
     conflicts: list[ConflictOut]
     temporal_notes: list[str]
+    missing_information: list[str]
+    coverage: dict
+    generation_mode: str
+    provider_error: str | None
 
 
 # SECTION sources (bare-act text) are usually short -- show the exact,
@@ -94,7 +100,7 @@ _SECTION_TEXT_CAP = 4000
 _JUDGMENT_TEXT_CAP = 1500
 
 
-def _source_out(s, repo: SQLiteCorpusRepository) -> SourceOut:
+def _source_out(s, repo: SQLiteCorpusRepository, supports: list[str] | None = None) -> SourceOut:
     row = repo.get_source(s.source_id)
     cap = _SECTION_TEXT_CAP if s.source_type == "SECTION" else _JUDGMENT_TEXT_CAP
     text = row["full_text"][:cap] if row else s.text
@@ -102,6 +108,7 @@ def _source_out(s, repo: SQLiteCorpusRepository) -> SourceOut:
     return SourceOut(
         label=s.label, title=s.title, source_type=s.source_type,
         act_name=s.act_name, section_no=s.section_no, text=text, url=url,
+        supports=supports or [],
     )
 
 
@@ -115,7 +122,17 @@ def chat(req: ChatRequest) -> ChatResponse:
     # wins over throughput no real user needs yet.
     with _db_lock:
         state = run_query(req.message, _get_repo(), _get_llm(), mode=req.mode)
-        sources = [_source_out(s, _get_repo()) for s in state.retrieved_sources]
+        claims_by_label: dict[str, list[str]] = {}
+        for claim in state.verified_claims:
+            for label in claim.cited_labels:
+                claims_by_label.setdefault(label, []).append(claim.sentence)
+        # The UI should show authorities actually used in the answer, not
+        # every candidate the retriever considered.
+        sources = [
+            _source_out(s, _get_repo(), claims_by_label[s.label])
+            for s in state.retrieved_sources
+            if s.label in claims_by_label
+        ]
     return ChatResponse(
         answer=state.final_answer,
         abstained=state.abstained,
@@ -127,4 +144,8 @@ def chat(req: ChatRequest) -> ChatResponse:
         safety_flags=state.safety_flags,
         conflicts=[ConflictOut(**c) for c in state.conflicts],
         temporal_notes=state.temporal_notes,
+        missing_information=state.missing_information,
+        coverage=state.coverage,
+        generation_mode=state.generation_mode,
+        provider_error=state.provider_error if settings.expose_provider_errors else None,
     )

@@ -13,6 +13,8 @@ used in app/pipeline/graph.py's REASONING_PROMPT_TEMPLATE.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -23,6 +25,8 @@ from app.documents.extractor import extract_document
 router = APIRouter(prefix="/api/v1", tags=["documents"])
 
 _MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB -- generous for a contract/notice, not for a mistake
+_MAX_TEXT_UPLOAD_BYTES = 2 * 1024 * 1024
+_READ_CHUNK_BYTES = 1024 * 1024
 _ALLOWED_SUFFIXES = (".pdf", ".txt")
 
 
@@ -45,15 +49,29 @@ class DocumentAnalysisOut(BaseModel):
 
 @router.post("/documents/upload", response_model=DocumentAnalysisOut)
 async def upload_document(file: UploadFile = File(...)) -> DocumentAnalysisOut:
-    filename = file.filename or "upload"
+    filename = Path(file.filename or "upload").name
     if not filename.lower().endswith(_ALLOWED_SUFFIXES):
         raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(_ALLOWED_SUFFIXES)}")
 
-    file_bytes = await file.read()
-    if len(file_bytes) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail=f"File exceeds {_MAX_UPLOAD_BYTES // (1024*1024)}MB limit")
+    chunks: list[bytes] = []
+    total_bytes = 0
+    while chunk := await file.read(_READ_CHUNK_BYTES):
+        total_bytes += len(chunk)
+        if total_bytes > _MAX_UPLOAD_BYTES:
+            await file.close()
+            raise HTTPException(status_code=413, detail=f"File exceeds {_MAX_UPLOAD_BYTES // (1024*1024)}MB limit")
+        chunks.append(chunk)
+    await file.close()
+    file_bytes = b"".join(chunks)
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if filename.lower().endswith(".pdf") and not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="File extension is PDF but the content is not a valid PDF")
+    if filename.lower().endswith(".txt"):
+        if total_bytes > _MAX_TEXT_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Text files are limited to 2MB")
+        if b"\x00" in file_bytes[:4096]:
+            raise HTTPException(status_code=400, detail="Binary content is not accepted as a text document")
 
     try:
         doc = extract_document(file_bytes, filename)
