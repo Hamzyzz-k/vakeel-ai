@@ -36,15 +36,23 @@ STATUTES_DIR = RAW_DATA_DIR / "statutes"
 # PDF + a browser search (Ctrl+F for "Section N") is the honest version of
 # "link to the official source" -- not a per-section link that was never
 # verified to exist.
+# indiacode.nic.in migrated to indiacode.gov.in (a new DSpace 8 catalog with
+# different item UUIDs) some time after these URLs were first verified --
+# confirmed live 2026-08-26 when the old bitstream links started 404ing.
+# The new URLs hit the bitstream content endpoint directly
+# (server/api/core/bitstreams/{uuid}/content), found by matching each
+# statute's dc.identifier.act_id from a known section back to its owning
+# ACT-collection item, since several stale/duplicate act-level records in
+# the new catalog have no attached PDF at all.
 STATUTES = [
     ("contract_act_1872.pdf", "The Indian Contract Act, 1872", "contract_act_1872", "contract",
-     "https://www.indiacode.nic.in/bitstream/123456789/2187/2/A187209.pdf"),
+     "https://indiacode.gov.in/server/api/core/bitstreams/e7571d39-11a7-4a2c-86e3-c515ae43e617/content"),
     ("consumer_protection_act_2019.pdf", "The Consumer Protection Act, 2019", "consumer_protection_act_2019", "consumer",
-     "https://www.indiacode.nic.in/bitstream/123456789/12808/1/the_consumer_protection_act,_2019_no._35_of_2019_date_09.08.2019.pdf"),
+     "https://indiacode.gov.in/server/api/core/bitstreams/001fc870-0321-4c1f-8c29-c202608c9442/content"),
     ("bns_2023.pdf", "The Bharatiya Nyaya Sanhita, 2023", "bns_2023", "criminal",
-     "https://www.indiacode.nic.in/bitstream/123456789/20062/1/a202345.pdf"),
+     "https://indiacode.gov.in/server/api/core/bitstreams/8007a80e-259b-429d-9ca4-1a2f474b5000/content"),
     ("sale_of_goods_act_1930.pdf", "The Sale of Goods Act, 1930", "sale_of_goods_act_1930", "contract",
-     "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf"),
+     "https://indiacode.gov.in/server/api/core/bitstreams/8d3daeca-d1b6-4692-aed1-758ded8ae027/content"),
 ]
 
 # A section header is a number + '.' at the start of a line. Real bare acts
