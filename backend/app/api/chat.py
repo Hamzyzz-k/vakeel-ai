@@ -102,7 +102,7 @@ _JUDGMENT_TEXT_CAP = 1500
 
 def _source_out(s, repo: SQLiteCorpusRepository, supports: list[str] | None = None) -> SourceOut:
     row = repo.get_source(s.source_id)
-    cap = _SECTION_TEXT_CAP if s.source_type == "SECTION" else _JUDGMENT_TEXT_CAP
+    cap = _SECTION_TEXT_CAP if s.source_type in {"SECTION", "RULE", "ARTICLE", "SCHEDULE"} else _JUDGMENT_TEXT_CAP
     text = row["full_text"][:cap] if row else s.text
     url = row["url"] if row else None
     return SourceOut(

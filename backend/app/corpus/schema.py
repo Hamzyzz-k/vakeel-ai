@@ -43,6 +43,31 @@ CREATE INDEX IF NOT EXISTS idx_sources_corpus ON legal_sources(corpus);
 CREATE INDEX IF NOT EXISTS idx_sources_domain ON legal_sources(domain);
 CREATE INDEX IF NOT EXISTS idx_sources_type ON legal_sources(source_type);
 
+-- Provenance and lifecycle for every ingested statute.  Legal text without
+-- a resolved official record, content hash and verification date cannot be
+-- treated as production-ready merely because a PDF happened to parse.
+CREATE TABLE IF NOT EXISTS statute_versions (
+    statute_key          TEXT PRIMARY KEY,
+    act_id               TEXT,
+    title                TEXT NOT NULL,
+    jurisdiction         TEXT NOT NULL,
+    state                TEXT,
+    domain               TEXT NOT NULL,
+    tranche              INTEGER NOT NULL CHECK (tranche BETWEEN 1 AND 4),
+    lifecycle_status     TEXT NOT NULL,
+    effective_from       TEXT,
+    effective_to         TEXT,
+    source_item_uuid     TEXT,
+    source_bitstream_uuid TEXT NOT NULL,
+    source_url           TEXT NOT NULL,
+    source_sha256        TEXT NOT NULL,
+    verified_at          TEXT NOT NULL,
+    section_count        INTEGER NOT NULL,
+    ingested_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_statute_versions_domain ON statute_versions(domain);
+
 -- Legal-structure-aware chunks (spec section 22) -- chunked by rhetorical
 -- role / section boundary, not fixed token windows. One source can have
 -- many chunks; a chunk always traces back to its source and paragraph.

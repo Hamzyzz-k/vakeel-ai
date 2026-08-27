@@ -163,6 +163,25 @@ def test_added_negation_cannot_reverse_the_source_rule():
     assert len(state.rejected_claims) == 1
 
 
+def test_and_or_cannot_make_cumulative_penalties_optional():
+    sources = [RetrievedSource(
+        label="S1", source_id="x", title="IT Act section 66C",
+        text=(
+            "The offender shall be punished with imprisonment for a term which may extend to "
+            "three years and shall also be liable to fine which may extend to one lakh rupees."
+        ),
+        source_type="SECTION",
+    )]
+    state = make_state(
+        "The offence is punishable by imprisonment for three years and/or a fine of one lakh rupees [S1].",
+        sources,
+    )
+    verify_answer(state, use_nli=False)
+
+    assert state.verified_claims == []
+    assert len(state.rejected_claims) == 1
+
+
 def test_trace_records_verification_counts():
     sources = [RetrievedSource(label="S1", source_id="x", title="t", text="a landlord shall return the deposit", source_type="SECTION")]
     state = make_state("A landlord shall return the deposit [S1]. This cites nothing real [S99].", sources)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from app.pipeline.citation import lexical_overlap
+from app.pipeline.citation import has_high_impact_contradiction, lexical_overlap
 from app.pipeline.state import LegalQueryState
 
 WEIGHTS = {
@@ -77,13 +77,7 @@ def _answer_completeness(state: LegalQueryState) -> float:
 
 
 def _looks_contradictory(claim: str, evidence: str) -> bool:
-    claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim))
-    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", evidence))
-    if claim_numbers and not claim_numbers.issubset(evidence_numbers):
-        return True
-    claim_negated = bool(re.search(r"\b(?:no|not|never|without)\b", claim, re.IGNORECASE))
-    evidence_negated = bool(re.search(r"\b(?:no|not|never|without)\b", evidence, re.IGNORECASE))
-    return claim_negated and not evidence_negated
+    return has_high_impact_contradiction(claim, evidence)
 
 
 def _contradiction_score(state: LegalQueryState) -> float:

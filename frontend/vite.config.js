@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Local-only for now: proxy /api straight to the FastAPI backend on 8000.
-// If CLOUD mode is ever wired up, this becomes an env-driven base URL --
-// see backend/app/config.py for the mirrored switch.
+// Local development can target a second backend port without rewriting the
+// app. Production still uses VITE_API_BASE_URL from src/lib/api.js.
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || "http://localhost:8000";
+
 export default defineConfig({
   plugins: [react()],
   envDir: "..",
@@ -12,7 +13,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },
@@ -22,7 +23,7 @@ export default defineConfig({
     port: 4173,
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },

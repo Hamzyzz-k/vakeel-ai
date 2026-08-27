@@ -27,6 +27,7 @@ from app.corpus.repository import SQLiteCorpusRepository
 from app.llm.provider import LLMProvider, AllProvidersFailed
 from app.legal.ipc_bns_mapping import EFFECTIVE_DATE
 from app.legal.query_bridge import augment_search_queries, find_ipc_references
+from app.legal.statute_catalog import INGESTIBLE_STATUTES, get_statute_by_title
 from app.legal.statute_reference import extract_concept_references, extract_statute_references
 from app.pipeline.citation import split_sentences, verify_answer, verify_irac
 from app.pipeline.citation_graph import build_citation_graph, detect_conflicts
@@ -36,6 +37,7 @@ from app.pipeline.safety import (
     apply_safety_checks,
     assess_corpus_coverage,
     build_evidence_block,
+    infer_supported_domain,
 )
 from app.pipeline.state import LegalQueryState, RetrievedSource
 from app.retrieval.bm25 import bm25_search_chunks
@@ -49,7 +51,8 @@ Given a user's question, extract structured facts. Respond with ONLY a JSON obje
 {{
   "jurisdiction_country": "India",
   "jurisdiction_state": null or a state name if mentioned,
-  "legal_domain": one of "criminal", "consumer", "contract", "other",
+  "legal_domain": a concise snake_case legal topic such as "criminal", "consumer", "contract", \
+"property", "tenancy", "family", "technology", or "other",
   "issues": [short phrases naming the legal issues],
   "facts": [only material facts explicitly stated by the user],
   "missing_information": [facts needed to give a more specific answer],
@@ -146,16 +149,10 @@ def run_intake(state: LegalQueryState, llm: LLMProvider) -> LegalQueryState:
     concept_references = extract_concept_references(state.user_query) if not statute_references else []
     routed_references = statute_references or concept_references
     if routed_references:
-        domain_by_act = {
-            "The Indian Penal Code, 1860": "criminal",
-            "The Bharatiya Nyaya Sanhita, 2023": "criminal",
-            "The Consumer Protection Act, 2019": "consumer",
-            "The Indian Contract Act, 1872": "contract",
-            "The Sale of Goods Act, 1930": "contract",
-        }
-        state.legal_domain = domain_by_act.get(routed_references[0].act_name)
+        routed_spec = get_statute_by_title(routed_references[0].act_name)
+        state.legal_domain = routed_spec.domain if routed_spec else "criminal"
         state.issues = [
-            f"{reference.act_name} section {reference.section_no}"
+            f"{reference.act_name} {reference.provision_kind} {reference.section_no}"
             for reference in routed_references
         ]
         state.search_queries = [state.user_query]
@@ -184,6 +181,8 @@ def run_intake(state: LegalQueryState, llm: LLMProvider) -> LegalQueryState:
             })
             state.jurisdiction = {"country": data.get("jurisdiction_country") or "India", "state": data.get("jurisdiction_state")}
             state.legal_domain = data.get("legal_domain")
+            if state.legal_domain not in {spec.domain for spec in INGESTIBLE_STATUTES}:
+                state.legal_domain = infer_supported_domain(state.user_query) or state.legal_domain
             state.issues = data.get("issues", [])
             state.facts = data.get("facts", [])
             state.missing_information = data.get("missing_information", [])
@@ -192,6 +191,10 @@ def run_intake(state: LegalQueryState, llm: LLMProvider) -> LegalQueryState:
         except (AllProvidersFailed, ValueError) as exc:
             # Intake is a convenience, not a hard dependency -- fall back to
             # the raw query instead of failing over malformed model output.
+            # Mark the domain as unknown so the second coverage gate fails
+            # closed.  Leaving it as None previously let fuzzy retrieval
+            # answer any out-of-corpus question with the closest statute.
+            state.legal_domain = infer_supported_domain(state.user_query) or "other"
             state.search_queries = [state.user_query]
             state.record("intake_fallback", {"error": str(exc)}, started)
 
@@ -218,7 +221,8 @@ def run_intake(state: LegalQueryState, llm: LLMProvider) -> LegalQueryState:
 
 def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: int = 4) -> LegalQueryState:
     started = time.perf_counter()
-    domain = state.legal_domain if state.legal_domain in {"criminal", "consumer", "contract"} else None
+    loaded_domains = {spec.domain for spec in INGESTIBLE_STATUTES}
+    domain = state.legal_domain if state.legal_domain in loaded_domains else None
     direct_rows = []
     for reference in extract_statute_references(state.user_query):
         row = repo.find_statute_section(reference.act_name, reference.section_no)
@@ -277,9 +281,12 @@ def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: i
         is_live_corpus = str(repo.db_path) == str(CORPUS_DB_PATH)
         if settings.enable_vector_retrieval and is_live_corpus and vector_index.exists():
             try:
-                vector_ranking = [chunk_id for chunk_id, _score in vector_index.search(state.user_query, top_k=50)]
-                rankings.append(vector_ranking)
-                vector_used = True
+                if vector_index.is_fresh(repo, "product"):
+                    vector_ranking = [chunk_id for chunk_id, _score in vector_index.search(state.user_query, top_k=50)]
+                    rankings.append(vector_ranking)
+                    vector_used = True
+                else:
+                    state.safety_flags.append("vector_index_stale")
             except Exception as exc:  # optional retrieval arm must fail open
                 state.safety_flags.append(f"vector_retrieval_unavailable:{type(exc).__name__}")
 
@@ -324,6 +331,10 @@ def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: i
                 break
 
     state.retrieved_sources = sources
+    for source in sources:
+        spec = get_statute_by_title(source.act_name or "")
+        if spec and spec.source_note and spec.source_note not in state.temporal_notes:
+            state.temporal_notes.append(spec.source_note)
     state.record(
         "retrieval",
         {
@@ -407,6 +418,31 @@ def build_extractive_fallback(state: LegalQueryState, max_sources: int = 1) -> s
     return " ".join(extracted)
 
 
+def build_research_extractive_fallback(state: LegalQueryState) -> dict[str, str]:
+    """Preserve the Research product shape when generation is unavailable.
+
+    This deliberately stops at source-backed rule text and authority
+    metadata. Application and conclusion require reasoning about the user's
+    facts, so fabricating them in an offline fallback would be less useful
+    than leaving those fields absent.
+    """
+    rule = build_extractive_fallback(state)
+    routed = [
+        source for source in state.retrieved_sources
+        if source.retrieval_method in {"direct_reference", "temporal_reference", "concept_reference"}
+    ]
+    selected = routed or state.retrieved_sources[:1]
+    authorities = " ".join(
+        f"Primary authority: {source.title} [{source.label}]."
+        for source in selected
+    )
+    return {
+        "issue": state.user_query.strip(),
+        "rule": rule,
+        "authorities": authorities,
+    }
+
+
 RETRY_NUDGE = """
 
 REMINDER, because the last attempt at this got it wrong: every sentence in "rule", "authorities", "application", \
@@ -444,9 +480,8 @@ def run_reasoning_research(state: LegalQueryState, llm: LLMProvider, retry: bool
             state.provider_error = str(exc)
             state.generation_mode = "extractive_fallback"
             state.safety_flags.append("llm_unavailable")
-            fallback = build_extractive_fallback(state)
-            state.irac_sections = {"authorities": fallback} if fallback else {}
-            state.raw_answer = fallback
+            state.irac_sections = build_research_extractive_fallback(state)
+            state.raw_answer = " ".join(state.irac_sections.values())
         state.record("reasoning_research_failed", {"error": str(exc), "retry": retry}, started)
     return state
 

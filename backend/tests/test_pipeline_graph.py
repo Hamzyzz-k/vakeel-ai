@@ -9,6 +9,7 @@ import json
 from app.corpus.repository import SQLiteCorpusRepository, LegalSource, LegalChunk
 from app.llm.provider import LLMProvider, LLMResponse, AllProvidersFailed
 from app.pipeline.graph import build_extractive_fallback, run_query, run_intake, run_retrieval, run_reasoning_research
+from app.pipeline.safety import assess_corpus_coverage
 from app.pipeline.state import LegalQueryState, RetrievedSource
 
 
@@ -89,7 +90,35 @@ def test_run_intake_falls_back_gracefully_on_llm_failure(tmp_path):
     state = LegalQueryState(user_query="test question")
     run_intake(state, FailingLLM())
     assert state.search_queries == ["test question"]
+    assert state.legal_domain == "other"
     assert any(e.step == "intake_fallback" for e in state.trace)
+
+
+def test_run_intake_infers_loaded_domain_when_llm_is_down():
+    class FailingLLM:
+        def generate_json(self, *a, **k):
+            raise AllProvidersFailed("all providers down")
+
+    state = LegalQueryState(
+        user_query="A supplier breached our contract and failed to deliver the goods."
+    )
+    run_intake(state, FailingLLM())
+
+    assert state.legal_domain == "contract"
+
+
+def test_car_fc_query_is_classified_into_loaded_motor_vehicle_domain_when_llm_is_down():
+    class FailingLLM:
+        def generate_json(self, *args, **kwargs):
+            raise AllProvidersFailed("all providers down")
+
+    state = LegalQueryState(user_query="My car fitness certificate expired. What renewal penalty applies?")
+    run_intake(state, FailingLLM())
+    covered, reason = assess_corpus_coverage(state)
+
+    assert state.legal_domain == "motor_vehicle"
+    assert covered is True
+    assert reason is None
 
 
 def test_run_retrieval_finds_relevant_product_corpus_source(tmp_path):
@@ -228,6 +257,29 @@ def test_extractive_fallback_keeps_every_concept_routed_provision():
     assert "Goods shall correspond" in fallback
     assert "After acceptance" in fallback
     assert "reasonable time" in fallback
+
+
+def test_research_fallback_keeps_research_structure_when_providers_fail(tmp_path):
+    class ProviderDownLLM(StubLLM):
+        def generate_json(self, *args, **kwargs):
+            raise AllProvidersFailed("providers unavailable")
+
+    repo = make_repo(tmp_path)
+    llm = ProviderDownLLM(intake_json={})
+    state = run_query(
+        "Explain Section 73 of the Indian Contract Act",
+        repo,
+        llm,
+        mode="research",
+    )
+
+    assert state.generation_mode == "extractive_fallback"
+    assert state.abstained is False
+    assert "ISSUE" in state.final_answer
+    assert "RULE" in state.final_answer
+    assert "AUTHORITIES" in state.final_answer
+    assert "Indian Contract Act - Section 73" in state.final_answer
+    assert len(state.verified_claims) >= 2
 
 
 def test_run_query_abstains_when_no_sources_in_corpus(tmp_path):

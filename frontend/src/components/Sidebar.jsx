@@ -4,8 +4,8 @@ import BrandMark from "./BrandMark.jsx";
 
 function SidebarContent({ isMobile, activeId, conversations, onNewChat, onSelectConversation, onDeleteConversation, onClose }) {
   return (
-    <div className="flex flex-col h-full w-64 bg-[var(--olive-dark)] text-[var(--ivory)]">
-      <div className="px-5 pt-6 pb-5 flex items-center justify-between flex-shrink-0">
+    <div className="workspace-sidebar-panel flex h-full w-[270px] flex-col bg-[#111111] text-[#f5f5f3]">
+      <div className="flex flex-shrink-0 items-center justify-between px-5 pb-5 pt-6">
         <BrandMark compact inverse className="text-white" />
         {isMobile && (
           <button
@@ -21,7 +21,7 @@ function SidebarContent({ isMobile, activeId, conversations, onNewChat, onSelect
       <div className="px-3 pb-4 flex-shrink-0">
         <button
           onClick={() => { onNewChat(); if (isMobile) onClose(); }}
-          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-white/15 text-sm text-white/70 hover:bg-white/8 hover:text-white transition-all duration-150"
+          className="flex w-full items-center justify-center gap-2 border border-white/30 px-3 py-3 text-[11px] font-bold text-white/75 transition-all duration-150 hover:-translate-y-px hover:bg-white/10 hover:text-white active:scale-[0.98]"
         >
           <Plus size={16} weight="bold" className="flex-shrink-0" />
           New conversation
@@ -48,8 +48,8 @@ function SidebarContent({ isMobile, activeId, conversations, onNewChat, onSelect
                 <div key={conv.id} className="group relative">
                   <button
                     onClick={() => { onSelectConversation(conv.id); if (isMobile) onClose(); }}
-                    className={`w-full text-left pl-3 pr-10 py-2.5 rounded-xl transition-all duration-150 ${
-                      activeId === conv.id ? "bg-white/12 text-white" : "text-white/55 hover:bg-white/6 hover:text-white/85"
+                    className={`w-full border-l-2 py-2.5 pl-3 pr-10 text-left transition-all duration-150 ${
+                      activeId === conv.id ? "border-white bg-white/10 text-white" : "border-transparent text-white/55 hover:bg-white/5 hover:text-white/85"
                     }`}
                   >
                     <p className="text-sm font-medium truncate leading-snug">{conv.title}</p>
@@ -120,7 +120,7 @@ export default function Sidebar(props) {
 
   return (
     <aside
-      className={`flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${isOpen ? "w-64" : "w-0"}`}
+      className={`flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "w-[270px]" : "w-0"}`}
     >
       <SidebarContent {...props} />
     </aside>

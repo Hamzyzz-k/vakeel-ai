@@ -61,6 +61,27 @@ class VectorIndex:
     def exists(self) -> bool:
         return self.matrix_path.exists() and self.ids_path.exists()
 
+    def is_fresh(self, repo: SQLiteCorpusRepository, corpus: str) -> bool:
+        """Reject an index built against a different corpus snapshot.
+
+        Ingestion is deliberately batch-based, so the persisted matrix can
+        outlive the SQLite corpus. A stale matrix is worse than no vector arm:
+        it can surface old authorities and make newly loaded law invisible.
+        The IDs list is the authoritative cheap freshness check; a future
+        build can add a content hash without changing this guard.
+        """
+        if not self.exists():
+            return False
+        try:
+            ids = json.loads(self.ids_path.read_text(encoding="utf-8"))
+            row = repo._conn().execute(
+                "SELECT count(*) FROM legal_chunks lc JOIN legal_sources ls ON ls.id = lc.source_id WHERE ls.corpus = ?",
+                (corpus,),
+            ).fetchone()
+            return isinstance(ids, list) and len(ids) == int(row[0])
+        except (OSError, ValueError, TypeError, IndexError):
+            return False
+
     def load(self) -> None:
         self._matrix = np.load(self.matrix_path)
         self._ids = json.loads(self.ids_path.read_text(encoding="utf-8"))

@@ -14,15 +14,15 @@ def test_abstains_when_no_sources_retrieved():
     assert "No relevant" in reason
 
 
-def test_tenancy_question_is_rejected_as_a_corpus_gap():
+def test_karnataka_tenancy_question_passes_loaded_domain_gate():
     state = LegalQueryState(user_query="My landlord will not return my security deposit")
     state.legal_domain = "contract"
 
     covered, reason = assess_corpus_coverage(state)
 
-    assert covered is False
-    assert "tenancy" in reason
-    assert state.coverage["status"] == "unsupported"
+    assert covered is True
+    assert reason is None
+    assert state.coverage["status"] == "supported"
 
 
 def test_loaded_contract_topic_passes_coverage_gate():
@@ -34,6 +34,46 @@ def test_loaded_contract_topic_passes_coverage_gate():
     assert covered is True
     assert reason is None
     assert state.coverage["status"] == "supported"
+
+
+def test_named_planned_act_is_not_answered_from_a_nearby_loaded_act():
+    state = LegalQueryState(user_query="Explain CPC section 9")
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is False
+    assert state.coverage["status"] == "planned_not_verified"
+    assert "Code of Civil Procedure" in reason
+
+
+def test_named_verified_tranche_one_act_passes_coverage_gate():
+    state = LegalQueryState(user_query="Explain Karnataka Rent Act section 27")
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is True
+    assert reason is None
+
+
+def test_vehicle_fitness_certificate_passes_after_transport_laws_are_loaded():
+    state = LegalQueryState(
+        user_query="My car FC expired. Can I renew the fitness certificate and what penalty applies?"
+    )
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is True
+    assert reason is None
+    assert state.coverage["status"] == "supported"
+
+
+def test_unknown_model_domain_is_rejected_instead_of_fuzzy_matching():
+    state = LegalQueryState(user_query="How do I renew my passport?", legal_domain="immigration")
+
+    covered, reason = assess_corpus_coverage(state)
+
+    assert covered is False
+    assert "outside the verified statutes" in reason
 
 
 def test_abstains_when_model_refuses_despite_evidence():

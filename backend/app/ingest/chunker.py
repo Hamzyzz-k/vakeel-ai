@@ -16,7 +16,12 @@ from app.corpus.repository import LegalChunk
 _PARA_NUM_RE = re.compile(r"^\s*(\d{1,4})\.\s+")
 
 
-def chunk_by_paragraph(source_id: str, text: str, max_chars: int = 1500) -> list[LegalChunk]:
+def chunk_by_paragraph(
+    source_id: str,
+    text: str,
+    max_chars: int = 1500,
+    section: str | None = None,
+) -> list[LegalChunk]:
     """
     Splits on numbered-paragraph boundaries (common in Indian judgments:
     "1. Petitioner prays..." / "2. The facts are..."). Falls back to
@@ -66,6 +71,7 @@ def chunk_by_paragraph(source_id: str, text: str, max_chars: int = 1500) -> list
                     id=f"{source_id}:p{idx}",
                     source_id=source_id,
                     chunk_text=sub,
+                    section=section,
                     paragraph=para_num,
                     char_start=start,
                     char_end=end,
@@ -83,6 +89,18 @@ def _split_long(text: str, max_chars: int) -> list[str]:
     out: list[str] = []
     cur = ""
     for s in sentences:
+        if len(s) > max_chars:
+            if cur:
+                out.append(cur.strip())
+                cur = ""
+            remaining = s.strip()
+            while len(remaining) > max_chars:
+                split_at = remaining.rfind(" ", 0, max_chars + 1)
+                split_at = split_at if split_at > max_chars // 2 else max_chars
+                out.append(remaining[:split_at].strip())
+                remaining = remaining[split_at:].strip()
+            cur = remaining
+            continue
         if len(cur) + len(s) + 1 > max_chars and cur:
             out.append(cur.strip())
             cur = s

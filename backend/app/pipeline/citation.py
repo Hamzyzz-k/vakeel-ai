@@ -100,6 +100,26 @@ def lexical_overlap(claim: str, evidence: str) -> float:
     return len(claim_tokens & evidence_tokens) / len(claim_tokens)
 
 
+def has_high_impact_contradiction(claim: str, evidence: str) -> bool:
+    """Catch deterministic contradictions that token overlap cannot see."""
+    claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim))
+    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", evidence))
+    if not claim_numbers.issubset(evidence_numbers):
+        return True
+
+    claim_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", claim, re.IGNORECASE))
+    evidence_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", evidence, re.IGNORECASE))
+    if claim_has_negation and not evidence_has_negation:
+        return True
+
+    # "A and B" creates two cumulative consequences; "A and/or B" makes
+    # either optional. The latter is a substantive change, not a harmless
+    # paraphrase (observed live on IT Act s66C).
+    if "and/or" in claim.casefold() and "and/or" not in evidence.casefold():
+        return True
+    return False
+
+
 def _get_nli_model():
     if "nli" not in _nli_cache:
         from sentence_transformers import CrossEncoder
@@ -143,14 +163,7 @@ def verify_claim(claim: str, evidence: str, use_nli: bool = True) -> tuple[bool,
     # High-impact factual markers must survive paraphrasing exactly. Word
     # overlap alone can otherwise approve "30 days" from a section that
     # never sets that deadline, or invert a duty by adding "not".
-    claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim))
-    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", evidence))
-    if not claim_numbers.issubset(evidence_numbers):
-        return False, overlap
-
-    claim_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", claim, re.IGNORECASE))
-    evidence_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", evidence, re.IGNORECASE))
-    if claim_has_negation and not evidence_has_negation:
+    if has_high_impact_contradiction(claim, evidence):
         return False, overlap
 
     if overlap < _LEXICAL_REJECT_BELOW:

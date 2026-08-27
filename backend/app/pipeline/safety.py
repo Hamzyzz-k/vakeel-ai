@@ -21,36 +21,65 @@ from __future__ import annotations
 
 import re
 
+from app.legal.statute_catalog import INGESTIBLE_STATUTES, get_statute_by_title, supported_act_titles
+from app.legal.statute_reference import extract_statute_references
 from app.pipeline.state import LegalQueryState, RetrievedSource
 
 # Below this evidence score, the honest answer is "I don't have enough to
 # say" -- spec section 41: "Should a human lawyer be consulted?"
 MIN_EVIDENCE_SCORE_FOR_ANSWER = 25.0
 
-SUPPORTED_ACTS = (
-    "Indian Contract Act, 1872",
-    "Sale of Goods Act, 1930",
-    "Consumer Protection Act, 2019",
-    "Bharatiya Nyaya Sanhita, 2023",
-)
+SUPPORTED_ACTS = supported_act_titles()
+SUPPORTED_DOMAINS = frozenset(spec.domain for spec in INGESTIBLE_STATUTES)
 
 # Precision-first topic gates for areas the product corpus does not contain.
 # A missed gate can still be caught by the intake domain fallback below; a
 # false gate is worse, so patterns deliberately use topic-specific phrases.
 _UNSUPPORTED_TOPICS: tuple[tuple[str, str, str], ...] = (
-    (r"\b(landlord|tenant|tenancy|rent control|rental agreement|lease agreement|eviction|security deposit)\b",
-     "tenancy / rent law", "the applicable state rent-control law and the Transfer of Property Act"),
     (r"\b(divorce|alimony|child custody|matrimonial|domestic violence|maintenance from (?:my )?(?:husband|wife))\b",
      "family law", "the applicable personal law, Family Courts Act, and related family-law statutes"),
     (r"\b(labour law|labor law|employment law|wrongful termination|unpaid salary|workplace harassment|gratuity|provident fund)\b",
      "employment / labour law", "the applicable labour and employment statutes"),
-    (r"\b(property dispute|land dispute|partition suit|inheritance|succession|adverse possession|title deed)\b",
-     "property / succession law", "property, succession, and state-specific land law"),
-    (r"\b(fundamental rights?|writ petition|article\s+(?:14|19|21|32|226)\b|constitutional remedy)\b",
-     "constitutional law", "the Constitution of India and relevant constitutional case law"),
     (r"\b(income tax|gst|goods and services tax|tax notice|tax assessment)\b",
      "tax law", "the applicable central and state tax legislation"),
 )
+
+# Used only when model-based intake is unavailable or returns an unknown
+# label.  These are broad subject anchors, not section routers: they keep
+# fuzzy retrieval inside the right loaded domain while the normal retrieval
+# and citation checks still decide whether any provision actually answers.
+_SUPPORTED_DOMAIN_HINTS: tuple[tuple[str, re.Pattern], ...] = (
+    ("motor_vehicle", re.compile(
+        r"\b(?:motor vehicles? act|central motor vehicles? rules|karnataka motor vehicles? rules|"
+        r"car|vehicle|bike|motorcycle|scooter|lorry|truck|fitness certificate|f\.?c\.?|"
+        r"registration certificate|r\.?c\.?|puc|pollution certificate|driving licen[cs]e|"
+        r"road tax|challan|vehicle permit|helmet)\b",
+        re.I,
+    )),
+    ("civil_procedure", re.compile(r"\b(?:limitation|time[- ]barred|time to sue|filing deadline)\b", re.I)),
+    ("civil_remedies", re.compile(r"\b(?:specific performance|injunction|declaratory relief|declaration of title)\b", re.I)),
+    ("dispute_resolution", re.compile(r"\b(?:arbitration|arbitral|arbitrator|set aside an? award)\b", re.I)),
+    ("commercial", re.compile(r"\b(?:cheque|check bounce|dishonou?r|promissory note|negotiable instrument)\b", re.I)),
+    ("real_estate", re.compile(r"\b(?:rera|builder|promoter|allottee|delayed possession|possession of (?:my |an? )?(?:flat|apartment))\b", re.I)),
+    ("criminal_procedure", re.compile(r"\b(?:fir|e-fir|zero fir|bail|arrest|cognizable|police station|investigation|remand)\b", re.I)),
+    ("technology", re.compile(r"\b(?:cyber|hacking|password|identity theft|online impersonation|electronic signature)\b", re.I)),
+    ("evidence", re.compile(r"\b(?:admissib|evidence|witness|electronic record|digital record|burden of proof)\b", re.I)),
+    ("constitutional", re.compile(r"\b(?:constitution|fundamental rights?|writ|article\s+(?:14|19|21|32|226|300a)|equality before the law)\b", re.I)),
+    ("land", re.compile(r"\b(?:agricultural land conversion|land revenue|revenue land|government land|public roads?)\b", re.I)),
+    ("tenancy", re.compile(r"\b(?:landlord|tenant|tenancy|rent|eviction|security deposit)\b", re.I)),
+    ("property", re.compile(r"\b(?:immovable property|mortgage|gift deed|easement|right of way|property transfer|registration|stamp duty|lease)\b", re.I)),
+    ("consumer", re.compile(r"\b(?:consumer|refund|defective product|product liability|misleading advertisement|warranty)\b", re.I)),
+    ("contract", re.compile(r"\b(?:contract|agreement|breach|supplier|indemnity|guarantee|promisee|seller|buyer|goods|deliver(?:y|ed)?)\b", re.I)),
+    ("criminal", re.compile(r"\b(?:theft|murder|assault|cheating|defamation|criminal offence|punishment)\b", re.I)),
+)
+
+
+def infer_supported_domain(query: str) -> str | None:
+    """Return a loaded domain only when the query contains a clear anchor."""
+    for domain, pattern in _SUPPORTED_DOMAIN_HINTS:
+        if pattern.search(query):
+            return domain
+    return None
 
 DISCLAIMER = (
     "This is legal information from an AI research assistant, not advice from "
@@ -66,7 +95,29 @@ def assess_corpus_coverage(state: LegalQueryState) -> tuple[bool, str | None]:
     is easily mistaken for "applicable" when an entire area of law is absent.
     """
     query = state.user_query.lower()
+    named_specs = []
+    unavailable_named_acts = []
+    for reference in extract_statute_references(state.user_query):
+        spec = get_statute_by_title(reference.act_name)
+        if spec is not None and spec not in named_specs:
+            named_specs.append(spec)
+        if spec is not None and not spec.ingestion_enabled and spec.title not in unavailable_named_acts:
+            unavailable_named_acts.append(spec.title)
+    if unavailable_named_acts:
+        titles = ", ".join(unavailable_named_acts)
+        state.coverage = {
+            "status": "planned_not_verified",
+            "topic": titles,
+            "required_sources": "an official, version-checked copy of the named Act",
+            "supported_acts": list(SUPPORTED_ACTS),
+        }
+        return False, (
+            f"{titles} is in the expansion plan but has not passed source and parser verification yet. "
+            "I will not answer from a nearby Act while that source is unavailable."
+        )
     for pattern, topic, required_sources in _UNSUPPORTED_TOPICS:
+        if named_specs and all(spec.ingestion_enabled for spec in named_specs):
+            break
         if re.search(pattern, query, flags=re.IGNORECASE):
             state.coverage = {
                 "status": "unsupported",
@@ -80,7 +131,9 @@ def assess_corpus_coverage(state: LegalQueryState) -> tuple[bool, str | None]:
             )
             return False, reason
 
-    if state.legal_domain == "other":
+    if state.legal_domain == "other" or (
+        state.legal_domain is not None and state.legal_domain not in SUPPORTED_DOMAINS
+    ):
         state.coverage = {
             "status": "unsupported",
             "topic": "an area outside the current corpus",
@@ -88,7 +141,7 @@ def assess_corpus_coverage(state: LegalQueryState) -> tuple[bool, str | None]:
             "supported_acts": list(SUPPORTED_ACTS),
         }
         return False, (
-            "The issue falls outside the four Acts currently loaded in the live corpus. "
+            "The issue falls outside the verified statutes currently loaded in the live corpus. "
             "I will not answer it using merely similar search results."
         )
 

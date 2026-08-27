@@ -39,7 +39,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
   const hasInput = !!input.trim();
 
   return (
-    <div className="flex-shrink-0 border-t border-[var(--line)] bg-[var(--taupe)]/25 px-4 pb-5 pt-3">
+    <div className="flex-shrink-0 border-t border-[var(--line)] bg-[color:var(--canvas)]/95 px-4 pb-4 pt-3 backdrop-blur-xl">
       <div className="max-w-2xl mx-auto relative">
         <input
           ref={fileInputRef}
@@ -52,8 +52,8 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
         {showPlus && (
           <div
             ref={plusRef}
-            className="absolute bottom-full left-0 mb-2.5 bg-[var(--paper)] border border-[var(--line)] rounded-2xl shadow-2xl overflow-hidden z-20 w-48"
-            style={{ boxShadow: "0 12px 36px rgba(53,67,46,0.14)" }}
+            className="absolute bottom-full left-0 z-20 mb-2.5 w-48 overflow-hidden rounded-[2px] border border-[var(--line)] bg-[var(--paper)] shadow-2xl"
+            style={{ boxShadow: "0 12px 36px rgba(0,0,0,0.14)" }}
           >
             <div className="px-4 py-2.5 border-b border-[var(--line)]">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70">Attach</p>
@@ -74,12 +74,12 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
         )}
 
         <div
-          className="flex items-end gap-3 bg-[var(--ivory)] border border-[var(--line-strong)] rounded-3xl px-4 py-3 transition-all duration-200 focus-within:border-[var(--olive)]"
-          style={{ boxShadow: "0 5px 22px rgba(53,67,46,0.09), 0 1px 3px rgba(53,67,46,0.08)" }}
+          className="flex items-end gap-3 rounded-[2px] border border-[var(--line-strong)] bg-[var(--paper)] px-4 py-3 transition-all duration-200 focus-within:border-[var(--olive)]"
+          style={{ boxShadow: "0 5px 22px rgba(0,0,0,0.09), 0 1px 3px rgba(0,0,0,0.08)" }}
         >
           <button
             onClick={() => setShowPlus((p) => !p)}
-            className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+            className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[2px] transition-all duration-200 ${
               showPlus ? "bg-[var(--olive-dark)] text-[var(--ivory)] rotate-45" : "bg-[var(--sage-soft)] text-[var(--ink-muted)] hover:bg-[var(--taupe)] hover:text-[var(--ink)]"
             }`}
             aria-label="Add attachment"
@@ -102,7 +102,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
           <button
             onClick={onSend}
             disabled={isTyping || !hasInput}
-            className={`relative flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+            className={`relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[2px] transition-all duration-200 ${
               hasInput ? "bg-[var(--olive)] hover:bg-[var(--olive-dark)] active:scale-[0.96]" : "bg-[var(--sage-soft)] text-[var(--ink-muted)]/40 cursor-not-allowed"
             }`}
             aria-label="Send message"

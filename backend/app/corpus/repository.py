@@ -46,6 +46,26 @@ class LegalChunk:
     char_end: int | None = None
 
 
+@dataclass
+class StatuteVersion:
+    statute_key: str
+    title: str
+    jurisdiction: str
+    domain: str
+    tranche: int
+    lifecycle_status: str
+    effective_from: str | None
+    effective_to: str | None
+    source_bitstream_uuid: str
+    source_url: str
+    source_sha256: str
+    verified_at: str
+    section_count: int
+    act_id: str | None = None
+    state: str | None = None
+    source_item_uuid: str | None = None
+
+
 class SQLiteCorpusRepository:
     """
     The only supported driver for now. See module docstring.
@@ -88,10 +108,22 @@ class SQLiteCorpusRepository:
                  judges, bench_strength, full_text)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, full_text=excluded.full_text,
-                domain=excluded.domain, authority_level=excluded.authority_level,
-                date=excluded.date, judges=excluded.judges, bench_strength=excluded.bench_strength,
-                url=excluded.url
+                corpus=excluded.corpus,
+                source_type=excluded.source_type,
+                title=excluded.title,
+                court=excluded.court,
+                jurisdiction=excluded.jurisdiction,
+                domain=excluded.domain,
+                date=excluded.date,
+                citation=excluded.citation,
+                url=excluded.url,
+                authority_level=excluded.authority_level,
+                act_name=excluded.act_name,
+                section_no=excluded.section_no,
+                case_number=excluded.case_number,
+                judges=excluded.judges,
+                bench_strength=excluded.bench_strength,
+                full_text=excluded.full_text
             """,
             (
                 s.id, s.corpus, s.source_type, s.title, s.court, s.jurisdiction, s.domain,
@@ -116,6 +148,29 @@ class SQLiteCorpusRepository:
         )
         self._conn().commit()
 
+    def replace_chunks_for_source(self, source_id: str, chunks: Iterable[LegalChunk]) -> None:
+        """Atomically replace all indexed passages for one source."""
+        materialized = list(chunks)
+        if any(chunk.source_id != source_id for chunk in materialized):
+            raise ValueError("Every replacement chunk must belong to the requested source")
+        connection = self._conn()
+        with connection:
+            connection.execute("DELETE FROM legal_chunks WHERE source_id = ?", (source_id,))
+            connection.executemany(
+                """
+                INSERT INTO legal_chunks
+                    (id, source_id, chunk_text, section, paragraph, rhetorical_role, char_start, char_end)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        chunk.id, chunk.source_id, chunk.chunk_text, chunk.section,
+                        chunk.paragraph, chunk.rhetorical_role, chunk.char_start, chunk.char_end,
+                    )
+                    for chunk in materialized
+                ],
+            )
+
     def add_eval_query(self, query_id: str, dataset: str, query_text: str) -> None:
         self._conn().execute(
             "INSERT INTO eval_queries (id, dataset, query_text) VALUES (?, ?, ?) "
@@ -131,6 +186,42 @@ class SQLiteCorpusRepository:
         )
         self._conn().commit()
 
+    def upsert_statute_version(self, version: StatuteVersion) -> None:
+        self._conn().execute(
+            """
+            INSERT INTO statute_versions
+                (statute_key, act_id, title, jurisdiction, state, domain, tranche,
+                 lifecycle_status, effective_from, effective_to,
+                 source_item_uuid, source_bitstream_uuid,
+                 source_url, source_sha256, verified_at, section_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(statute_key) DO UPDATE SET
+                act_id=excluded.act_id, title=excluded.title,
+                jurisdiction=excluded.jurisdiction, state=excluded.state,
+                domain=excluded.domain, tranche=excluded.tranche,
+                lifecycle_status=excluded.lifecycle_status,
+                effective_from=excluded.effective_from,
+                effective_to=excluded.effective_to,
+                source_item_uuid=excluded.source_item_uuid,
+                source_bitstream_uuid=excluded.source_bitstream_uuid,
+                source_url=excluded.source_url,
+                source_sha256=excluded.source_sha256,
+                verified_at=excluded.verified_at,
+                section_count=excluded.section_count,
+                ingested_at=datetime('now')
+            """,
+            (
+                version.statute_key, version.act_id, version.title,
+                version.jurisdiction, version.state, version.domain,
+                version.tranche, version.lifecycle_status,
+                version.effective_from, version.effective_to,
+                version.source_item_uuid, version.source_bitstream_uuid,
+                version.source_url, version.source_sha256,
+                version.verified_at, version.section_count,
+            ),
+        )
+        self._conn().commit()
+
     # -- reads --------------------------------------------------------------
 
     def get_source(self, source_id: str) -> sqlite3.Row | None:
@@ -142,12 +233,17 @@ class SQLiteCorpusRepository:
             ).fetchone()
         return self._source_cache[source_id]
 
+    def get_statute_version(self, statute_key: str) -> sqlite3.Row | None:
+        return self._conn().execute(
+            "SELECT * FROM statute_versions WHERE statute_key = ?", (statute_key,)
+        ).fetchone()
+
     def find_statute_section(self, act_name: str, section_no: str, corpus: str = "product") -> sqlite3.Row | None:
-        """Exact Act/section lookup for explicit user references."""
+        """Exact Act provision lookup for explicit section/article references."""
         return self._conn().execute(
             """
             SELECT * FROM legal_sources
-            WHERE corpus = ? AND source_type = 'SECTION'
+            WHERE corpus = ? AND source_type IN ('SECTION', 'RULE', 'ARTICLE', 'SCHEDULE')
               AND lower(act_name) = lower(?) AND upper(section_no) = upper(?)
             LIMIT 1
             """,

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowCounterClockwise,
   ArrowRight,
@@ -17,6 +17,8 @@ const QUICK_PROMPTS = [
   "What are my rights if a seller ships goods that don't match the description?",
   "A product I bought is defective and the seller refuses a refund. What does the law provide?",
   "What is the punishment for murder under Section 302 IPC?",
+  "My motorcycle was stopped for no helmet. What does the Motor Vehicles Act require?",
+  "What does CMVR Rule 62 say about a transport vehicle's fitness certificate?",
 ];
 
 // IRAC section headers (spec section 18) render on their own line in
@@ -30,12 +32,16 @@ const ACT_NAMES = {
   sale_of_goods_act_1930: "Sale of Goods Act, 1930",
   consumer_protection_act_2019: "Consumer Protection Act, 2019",
   bns_2023: "Bharatiya Nyaya Sanhita, 2023",
+  motor_vehicles_act_1988: "Motor Vehicles Act, 1988",
+  central_motor_vehicles_rules_1989: "Central Motor Vehicles Rules, 1989",
+  karnataka_motor_vehicles_rules_1989: "Karnataka Motor Vehicles Rules, 1989",
 };
 
 function formatSourceId(sourceId) {
-  const match = sourceId.match(/^indiacode:([^:]+):s(.+)$/);
+  const match = sourceId.match(/^indiacode:([^:]+):([sra])(.+)$/);
   if (!match) return sourceId;
-  return `${ACT_NAMES[match[1]] || match[1].replaceAll("_", " ")}, Section ${match[2]}`;
+  const labels = { s: "Section", r: "Rule", a: "Article" };
+  return `${ACT_NAMES[match[1]] || match[1].replaceAll("_", " ")}, ${labels[match[2]]} ${match[3]}`;
 }
 
 function renderContent(text) {
@@ -60,12 +66,13 @@ function WelcomeView({ mode, onQuickPrompt }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -16 }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      className="flex flex-col justify-center h-full px-5 sm:px-8 select-none max-w-3xl mx-auto w-full"
+      className="workspace-content-app mx-auto flex h-full w-full max-w-3xl select-none flex-col justify-center px-5 sm:px-8"
     >
-      <div className={`mb-6 flex h-12 w-12 items-center justify-center rounded-2xl shadow-[0_12px_32px_rgba(53,67,46,0.13)] ${isResearch ? "bg-[var(--olive-dark)] text-[var(--ivory)]" : "bg-[var(--taupe)] text-[var(--olive-dark)]"}`}>
+      <div className={`mb-6 flex h-12 w-12 items-center justify-center shadow-[6px_6px_0_rgba(0,0,0,0.12)] ${isResearch ? "bg-[var(--olive-dark)] text-[var(--ivory)]" : "bg-[var(--taupe)] text-[var(--olive-dark)]"}`}>
         {isResearch ? <BookOpen size={26} weight="duotone" /> : <Scales size={27} weight="bold" />}
       </div>
-      <h2 className="text-3xl sm:text-4xl font-semibold text-[var(--ink)] mb-3 tracking-[-0.035em]">
+      <p className="mb-5 inline-block w-fit border-b border-[var(--forest)] pb-1 font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--forest)]">Citation-verified legal information</p>
+      <h2 className="mb-3 font-serif text-5xl font-semibold leading-[0.86] tracking-[-0.055em] text-[var(--ink)] sm:text-7xl">
         {isResearch ? "Build a sourced legal research note" : "Tell me what happened"}
       </h2>
       <p className="text-[var(--ink-muted)] text-sm sm:text-base max-w-xl mb-6 leading-relaxed">
@@ -75,17 +82,18 @@ function WelcomeView({ mode, onQuickPrompt }) {
       </p>
       <div className="flex items-start gap-2.5 border-l-2 border-[var(--sage)] pl-3 mb-8 max-w-xl text-xs leading-relaxed text-[var(--ink-muted)]">
         <BookOpen className="w-4 h-4 mt-0.5 shrink-0 text-[var(--olive)]" />
-        <span>Current coverage: Contract Act, Sale of Goods Act, Consumer Protection Act, and Bharatiya Nyaya Sanhita. Unsupported areas are refused instead of matched to unrelated law.</span>
+        <span>Current coverage: 22 verified central and Karnataka statutes. Unsupported areas are refused instead of matched to unrelated law.</span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl w-full">
-        {QUICK_PROMPTS.map((prompt) => (
+      <div className="w-full max-w-2xl border-t border-[var(--line)]">
+        {QUICK_PROMPTS.map((prompt, index) => (
           <button
             key={prompt}
             onClick={() => onQuickPrompt(prompt)}
-            className="text-left px-4 py-3.5 rounded-2xl border border-[var(--line)] bg-[var(--ivory)] text-sm text-[var(--ink-muted)] hover:border-[var(--olive)] hover:text-[var(--ink)] hover:bg-[var(--taupe)]/45 transition-all duration-200 active:scale-[0.99] group"
+            className="group grid w-full grid-cols-[30px_1fr_18px] items-center gap-3 border-b border-[var(--line)] bg-transparent px-2 py-4 text-left text-sm text-[var(--ink-muted)] transition-all duration-200 hover:px-4 hover:text-[var(--forest)] active:scale-[0.99]"
           >
+            <span className="font-mono text-[9px] text-[var(--stone)]">{String(index + 1).padStart(2, "0")}</span>
             <span>{prompt}</span>
-            <ArrowRight size={14} weight="bold" className="inline ml-1 opacity-35 group-hover:opacity-60 transition-opacity" />
+            <ArrowRight size={14} weight="bold" className="opacity-35 transition-all group-hover:translate-x-1 group-hover:opacity-70" />
           </button>
         ))}
       </div>
@@ -93,9 +101,53 @@ function WelcomeView({ mode, onQuickPrompt }) {
   );
 }
 
+function WorkingStatus({ mode }) {
+  const [step, setStep] = useState(0);
+  const stages = mode === "document"
+    ? [
+        ["Reading the uploaded document", "Extracting clauses and headings"],
+        ["Checking clause structure", "Separating sections without changing the text"],
+        ["Mapping legal topics", "Matching only against loaded sources"],
+      ]
+    : [
+        ["Reading your question", "Identifying the legal issue and jurisdiction"],
+        ["Searching the loaded laws", "Retrieving the strongest sections and rules"],
+        ["Checking source text", "Testing that each citation supports the claim"],
+        ["Preparing the answer", "Writing a clear response with the limits made visible"],
+      ];
+
+  useEffect(() => {
+    setStep(0);
+    const timer = window.setInterval(() => setStep((current) => (current + 1) % stages.length), 2800);
+    return () => window.clearInterval(timer);
+  }, [mode, stages.length]);
+
+  const [label, detail] = stages[step];
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex items-end gap-2.5 justify-start"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="w-7 h-7 rounded-full bg-[var(--ink)] flex items-center justify-center flex-shrink-0">
+        <Scales size={15} weight="bold" className="text-[var(--canvas)]" />
+      </div>
+      <div className="rounded-3xl rounded-bl-lg border border-[var(--line)] bg-[var(--paper)] px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
+          <span className="text-xs font-semibold text-[var(--ink)]">{label}</span>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">{detail}</p>
+      </div>
+    </motion.div>
+  );
+}
+
 function AbstainNotice({ reason }) {
   return (
-    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
       <Warning size={15} weight="fill" className="mt-0.5 shrink-0" />
       <div>
         <span className="font-medium">Reliability safeguard applied. </span>
@@ -123,7 +175,7 @@ function MissingInformation({ items }) {
 function GenerationNotice({ mode }) {
   if (mode !== "extractive_fallback") return null;
   return (
-    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-relaxed text-sky-900">
+    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs leading-relaxed text-[var(--ink-muted)]">
       <BookOpen size={15} weight="bold" className="mt-0.5 shrink-0" />
       <span><span className="font-semibold">Source-only mode.</span> The language model was unavailable for this response, so the app is showing exact retrieved law instead of guessing.</span>
     </div>
@@ -135,12 +187,12 @@ function ConflictNotice({ conflicts }) {
   return (
     <div className="mt-2.5 space-y-1.5">
       {conflicts.map((c, i) => (
-        <div key={i} className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        <div key={i} className="flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
           <Warning size={15} weight="fill" className="mt-0.5 shrink-0" />
           <div>
             <span className="font-medium">Conflicting authority: </span>
             {c.reason}
-            {c.stronger && <span className="text-red-700/80"> — {c.stronger} is the stronger authority.</span>}
+            {c.stronger && <span> — {c.stronger} is the stronger authority.</span>}
           </div>
         </div>
       ))}
@@ -174,7 +226,7 @@ function DocumentAnalysisCard({ analysis }) {
           <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70 mb-1">Covered</p>
           <div className="flex flex-wrap gap-1.5">
             {analysis.detected_topics.map((t) => (
-              <span key={t} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800">
+              <span key={t} className="rounded-full border border-[var(--line-strong)] bg-[var(--canvas)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
                 {t}
               </span>
             ))}
@@ -186,7 +238,7 @@ function DocumentAnalysisCard({ analysis }) {
           <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70 mb-1">Not addressed</p>
           <div className="flex flex-wrap gap-1.5">
             {analysis.missing_topics.map((t) => (
-              <span key={t} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">
+              <span key={t} className="rounded-full border border-[var(--line-strong)] bg-[var(--canvas)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
                 {t}
               </span>
             ))}
@@ -249,12 +301,12 @@ function MessageBubble({ msg, onRetry }) {
         <div className="w-7 h-7 rounded-full bg-[var(--olive)] flex items-center justify-center flex-shrink-0 mb-0.5">
           <Scales size={15} weight="bold" className="text-white" />
         </div>
-        <div className="max-w-[80%] px-4 py-3 text-sm bg-red-50 border border-red-200 text-red-800 rounded-3xl rounded-bl-lg">
+        <div className="max-w-[80%] px-4 py-3 text-sm bg-[var(--canvas)] border border-[var(--line-strong)] text-[var(--ink)] rounded-3xl rounded-bl-lg">
           <p>{msg.error}</p>
           {onRetry && (
             <button
               onClick={onRetry}
-              className="mt-2 flex items-center gap-1.5 rounded-md border border-red-300 px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100 transition-colors duration-150"
+              className="mt-2 flex items-center gap-1.5 rounded-md border border-[var(--line-strong)] px-2.5 py-1 text-xs font-medium text-[var(--ink)] hover:bg-[var(--taupe)] transition-colors duration-150"
             >
               <ArrowCounterClockwise size={13} weight="bold" /> Retry
             </button>
@@ -339,24 +391,7 @@ export default function ChatArea({ activeId, messages, isTyping, mode, onQuickPr
               <MessageBubble key={msg.id} msg={msg} onRetry={msg.retryQuestion ? () => onRetry(msg) : null} />
             ))}
 
-            {isTyping && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex items-end gap-2.5 justify-start">
-                <div className="w-7 h-7 rounded-full bg-[var(--olive)] flex items-center justify-center flex-shrink-0">
-                  <Scales size={15} weight="bold" className="text-white" />
-                </div>
-                <div className="px-4 py-3.5 bg-[var(--paper)] border border-[var(--line)] rounded-3xl rounded-bl-lg shadow-sm">
-                  <div className="flex gap-1 items-center">
-                    {[0, 1, 2].map((i) => (
-                      <span
-                        key={i}
-                        className="w-1.5 h-1.5 rounded-full bg-[var(--sage)] animate-bounce"
-                        style={{ animationDelay: `${i * 0.15}s`, animationDuration: "0.9s" }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            )}
+            {isTyping && <WorkingStatus mode="chat" />}
 
             <div ref={bottomRef} />
           </motion.div>

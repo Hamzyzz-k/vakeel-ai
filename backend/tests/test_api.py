@@ -62,6 +62,18 @@ def test_health_endpoint_returns_ok():
     assert resp.json()["status"] == "ok"
 
 
+def test_coverage_endpoint_exposes_enabled_transport_instruments():
+    client = TestClient(app)
+    resp = client.get("/api/v1/coverage")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 22
+    by_key = {item["key"]: item for item in data}
+    assert by_key["central_motor_vehicles_rules_1989"]["instrument_kind"] == "rules"
+    assert by_key["central_motor_vehicles_rules_1989"]["provision_count"] == 195
+    assert "archived" in by_key["karnataka_motor_vehicles_rules_1989"]["source_note"].lower()
+
+
 def test_chat_endpoint_returns_verified_cited_answer(tmp_path):
     client = _client(tmp_path)
     resp = client.post("/api/v1/chat", json={"message": "What compensation can I claim for breach?"})

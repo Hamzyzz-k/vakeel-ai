@@ -3,8 +3,11 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
-.pytest_cache/
+.pytest_cache*/
 .pytest_temp*/
+.test-tmp*/
+backend/demo-*.log
+frontend/demo-*.log
 
 # Node
 node_modules/
@@ -30,6 +33,8 @@ tasks/
 .claude/
 .impeccable/
 CLAUDE.md
+PROJECT_CONTEXT.md
+CONTINUATION_REPORT.md
 
 # OS / editor
 .DS_Store

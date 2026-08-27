@@ -1,371 +1,152 @@
-import { memo } from "react";
 import {
   ArrowRight,
   ArrowSquareOut,
   BookOpenText,
-  CheckCircle,
-  FileText,
-  Fingerprint,
+  CaretRight,
+  FileMagnifyingGlass,
+  MagnifyingGlass,
   Quotes,
+  SealCheck,
   ShieldCheck,
   Sparkle,
 } from "@phosphor-icons/react";
-import {
-  motion,
-  useMotionValue,
-  useReducedMotion,
-  useSpring,
-  useTransform,
-} from "motion/react";
+import { motion, useScroll, useTransform } from "motion/react";
 import BrandMark from "./BrandMark.jsx";
+import SuitReveal from "./SuitReveal.jsx";
 
-const SPRING = { type: "spring", stiffness: 120, damping: 22 };
-
-const reveal = {
-  hidden: { opacity: 0, y: 28 },
-  visible: { opacity: 1, y: 0, transition: SPRING },
-};
-
-function MagneticButton({ children, onClick, secondary = false }) {
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-  const springX = useSpring(x, { stiffness: 190, damping: 18 });
-  const springY = useSpring(y, { stiffness: 190, damping: 18 });
-  const iconX = useTransform(springX, (value) => value * 0.2);
-
-  function move(event) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    x.set((event.clientX - bounds.left - bounds.width / 2) * 0.13);
-    y.set((event.clientY - bounds.top - bounds.height / 2) * 0.13);
-  }
-
-  function reset() {
-    x.set(0);
-    y.set(0);
-  }
-
-  return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      onMouseMove={move}
-      onMouseLeave={reset}
-      style={{ x: springX, y: springY }}
-      whileTap={{ scale: 0.98 }}
-      className={`group inline-flex items-center justify-center gap-2.5 rounded-full px-5 py-3 text-sm font-semibold transition-colors ${
-        secondary
-          ? "border border-[var(--line-strong)] bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--sage-soft)]"
-          : "bg-[var(--olive-dark)] text-[var(--ivory)] hover:bg-[var(--olive)]"
-      }`}
-    >
-      {children}
-      <motion.span style={{ x: iconX }}>
-        <ArrowRight size={16} weight="bold" aria-hidden="true" />
-      </motion.span>
-    </motion.button>
-  );
-}
-
-const OFFICIAL_ACTS = [
-  {
-    label: "Indian Contract Act, 1872",
-    url: "https://www.indiacode.nic.in/bitstream/123456789/2187/2/A187209.pdf",
-  },
-  {
-    label: "Sale of Goods Act, 1930",
-    url: "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
-  },
-  {
-    label: "Consumer Protection Act, 2019",
-    url: "https://www.indiacode.nic.in/bitstream/123456789/12808/1/the_consumer_protection_act,_2019_no._35_of_2019_date_09.08.2019.pdf",
-  },
-  {
-    label: "Bharatiya Nyaya Sanhita, 2023",
-    url: "https://www.indiacode.nic.in/bitstream/123456789/20062/1/a202345.pdf",
-  },
+const METHOD = [
+  ["01", "Route", "Direct Act and section references are resolved before fuzzy search.", ArrowRight],
+  ["02", "Retrieve", "Chunk-level lexical and vector retrieval finds the closest loaded provisions.", MagnifyingGlass],
+  ["03", "Verify", "Every displayed claim must point back to supplied source text.", FileMagnifyingGlass],
+  ["04", "Explain", "Practical next steps are framed with uncertainty and coverage limits visible.", Quotes],
 ];
 
-const ScenarioPreview = memo(function ScenarioPreview() {
-  const reduceMotion = useReducedMotion();
+const LAWS = [
+  ["Motor Vehicles Act, 1988", "Registration, licences, helmets, insurance and accident claims"],
+  ["Central Motor Vehicles Rules, 1989", "Fitness certificates, PUC, testing stations and vehicle records"],
+  ["Karnataka Motor Vehicles Rules, 1989", "Karnataka transport permits, authorities and procedures"],
+  ["Indian Contract Act, 1872", "Breach, damages, indemnity, guarantee and promises"],
+  ["Sale of Goods Act, 1930", "Description, acceptance, delivery, rejection and buyer remedies"],
+  ["Consumer Protection Act, 2019", "Defective products, refunds, services and product liability"],
+  ["Bharatiya Nyaya Sanhita, 2023", "Substantive criminal offences and punishments"],
+  ["Bharatiya Nagarik Suraksha Sanhita, 2023", "FIRs, arrest, bail, investigation and procedure"],
+  ["Bharatiya Sakshya Adhiniyam, 2023", "Electronic records, admissibility and proof"],
+  ["Information Technology Act, 2000", "Cyber offences, identity theft and electronic signatures"],
+  ["RERA Act, 2016", "Promoter duties, possession delay and allottee remedies"],
+  ["Transfer of Property Act, 1882", "Sale, mortgage, lease and part performance"],
+  ["Karnataka Rent Act, 1999", "Rent, eviction and tenant protections in Karnataka"],
+  ["Code of Civil Procedure, 1908", "Civil suits, jurisdiction, pleadings and execution"],
+  ["Specific Relief Act, 1963", "Injunctions, specific performance and declarations"],
+  ["Limitation Act, 1963", "Limitation periods and delayed claims"],
+  ["Registration Act, 1908", "Documents requiring registration and their effects"],
+  ["Arbitration and Conciliation Act, 1996", "Arbitration agreements, awards and challenges"],
+  ["Negotiable Instruments Act, 1881", "Cheque dishonour and negotiable instruments"],
+  ["Indian Easements Act, 1882", "Rights of way and easements by prescription"],
+  ["Karnataka Stamp Act, 1957", "Stamp duty and admissibility of instruments"],
+  ["Karnataka Land Revenue Act, 1964", "Revenue land, public roads and land records"],
+];
 
-  return (
-    <div className="relative min-h-[430px] overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--taupe)] p-5 text-[var(--ink)] shadow-[0_28px_70px_-32px_rgba(86,103,63,0.32)] sm:p-7">
-      <motion.div
-        aria-hidden="true"
-        animate={reduceMotion ? undefined : { rotate: [0, 7, 0], scale: [1, 1.06, 1] }}
-        transition={{ duration: 12, repeat: Infinity, ...SPRING }}
-        className="absolute -right-20 -top-20 h-64 w-64 rounded-full border border-[var(--olive)]/25"
-      />
-      <div className="relative flex items-center justify-between border-b border-[var(--olive-dark)]/15 pb-4">
-        <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--olive-dark)]">
-          <Quotes size={18} weight="duotone" aria-hidden="true" /> Advice preview
-        </span>
-        <motion.span
-          animate={reduceMotion ? undefined : { y: [0, -2, 0] }}
-          transition={{ duration: 2.4, repeat: Infinity, ...SPRING }}
-          className="rounded-full bg-[var(--sage-soft)] px-3 py-1 text-[10px] font-semibold text-[var(--olive-dark)]"
-        >
-          Sale of goods
-        </motion.span>
-      </div>
-
-      <div className="relative ml-auto mt-7 max-w-[88%] rounded-3xl rounded-br-lg bg-[var(--olive-dark)] px-4 py-3 text-sm leading-relaxed text-[var(--ivory)]">
-        The delivered goods do not match the seller&apos;s description. What should I do?
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 22 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.35, ...SPRING }}
-        className="relative mr-6 mt-4 rounded-3xl rounded-bl-lg border border-[var(--olive-dark)]/10 bg-[var(--ivory)] p-5"
-      >
-        <p className="text-sm leading-relaxed text-[var(--ink)]">
-          Start with Section 15: goods sold by description must correspond with that description. Keep the listing, invoice, and delivery photos, then notify the seller in writing before treating the goods as accepted.
-        </p>
-        <div className="mt-4 border-t border-[var(--taupe)] pt-3">
-          <a
-            href={OFFICIAL_ACTS[1].url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--olive-dark)] underline decoration-[var(--sage)] decoration-2 underline-offset-4 hover:text-[var(--olive)]"
-          >
-            Open the official Act · find Section 15 <ArrowSquareOut size={13} weight="bold" aria-hidden="true" />
-          </a>
-        </div>
-      </motion.div>
-    </div>
-  );
-});
-
-function StatuteRibbon() {
-  const reduceMotion = useReducedMotion();
-  return (
-    <div className="overflow-hidden border-y border-[var(--line-strong)] bg-[var(--sage-soft)] py-3">
-      <motion.div
-        animate={reduceMotion ? undefined : { x: ["0%", "-50%"] }}
-        transition={{ duration: 32, repeat: Infinity, ease: "linear", repeatType: "loop" }}
-        className="flex w-max will-change-transform"
-      >
-        {[0, 1].map((track) => (
-          <div key={track} aria-hidden={track === 1} className="flex min-w-[100vw] shrink-0 items-center justify-around gap-10 px-8">
-            {OFFICIAL_ACTS.map((item) => (
-              <a
-                key={`${track}-${item.label}`}
-                href={item.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                tabIndex={track === 1 ? -1 : 0}
-                className="group flex shrink-0 items-center gap-3 text-xs font-semibold text-[var(--ink-muted)] transition-colors hover:text-[var(--olive-dark)]"
-                title={`Open the official ${item.label}`}
-              >
-                <Sparkle size={12} weight="fill" className="text-[var(--olive)] transition-transform group-hover:rotate-45" aria-hidden="true" />
-                {item.label}
-                <ArrowSquareOut size={11} weight="bold" className="opacity-45 group-hover:opacity-100" aria-hidden="true" />
-              </a>
-            ))}
-          </div>
-        ))}
-      </motion.div>
-    </div>
-  );
-}
-
-function SectionHeading({ eyebrow, title, body }) {
-  return (
-    <motion.div variants={reveal} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.35 }}>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--olive)]">{eyebrow}</p>
-      <h2 className="mt-4 max-w-3xl text-3xl font-semibold leading-[1.05] tracking-[-0.045em] text-[var(--ink)] sm:text-5xl">{title}</h2>
-      {body && <p className="mt-5 max-w-[62ch] text-base leading-relaxed text-[var(--ink-muted)]">{body}</p>}
-    </motion.div>
-  );
-}
+const reveal = {
+  initial: { opacity: 0, y: 34 },
+  whileInView: { opacity: 1, y: 0 },
+  viewport: { once: true, amount: 0.25 },
+  transition: { duration: 0.68, ease: [0.23, 1, 0.32, 1] },
+};
 
 export default function LandingPage({ onEnter }) {
-  const reduceMotion = useReducedMotion();
-  const steps = [
-    ["01", "Route", "Direct Act and section references are resolved before fuzzy search."],
-    ["02", "Retrieve", "Chunk-level lexical and vector retrieval finds the closest loaded provisions."],
-    ["03", "Verify", "Every displayed claim must point back to supplied source text."],
-    ["04", "Explain", "You receive a practical answer with uncertainty and coverage limits visible."],
-  ];
+  const { scrollY } = useScroll();
+  const headerBackground = useTransform(scrollY, [0, 560, 680], ["rgba(12,12,12,0)", "rgba(12,12,12,0)", "rgba(255,255,255,0.92)"]);
+  const headerColor = useTransform(scrollY, [0, 560, 680], ["#fafafa", "#fafafa", "#121212"]);
+  const headerBorder = useTransform(scrollY, [0, 560, 680], ["rgba(18,18,18,0)", "rgba(18,18,18,0)", "rgba(18,18,18,0.1)"]);
 
   return (
-    <div className="landing-shell min-h-[100dvh] overflow-x-hidden bg-[var(--canvas)] text-[var(--ink)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-[color:var(--canvas)]/88 backdrop-blur-xl">
-        <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8" aria-label="Primary navigation">
-          <a href="#top" className="rounded-xl text-[var(--ink)]" aria-label="Vakeel AI home">
-            <BrandMark compact />
-          </a>
-          <div className="hidden items-center gap-7 text-sm text-[var(--ink-muted)] md:flex">
-            <a href="#method" className="transition-colors hover:text-[var(--ink)]">Method</a>
-            <a href="#modes" className="transition-colors hover:text-[var(--ink)]">Modes</a>
-            <a href="#safety" className="transition-colors hover:text-[var(--ink)]">Safety</a>
-          </div>
-          <button
-            type="button"
-            onClick={() => onEnter("Advice")}
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--olive-dark)] px-4 py-2 text-xs font-semibold text-[var(--ivory)] transition-transform active:scale-[0.98] sm:text-sm"
-          >
-            Open workspace <ArrowRight size={14} weight="bold" aria-hidden="true" />
-          </button>
+    <div className="landing-page min-h-[100dvh] overflow-x-clip bg-[var(--canvas)] text-[var(--ink)]">
+      <motion.header style={{ backgroundColor: headerBackground, color: headerColor, borderColor: headerBorder }} className="fixed inset-x-0 top-0 z-50 flex items-center justify-between border-b px-[clamp(20px,3vw,54px)] py-3.5 backdrop-blur-md">
+        <a href="#top" aria-label="VakeelAI home"><BrandMark compact /></a>
+        <nav className="hidden items-center gap-[clamp(18px,2.3vw,34px)] font-mono text-[10px] md:flex">
+          {["Method", "Coverage", "Modes", "Safety"].map((item) => <a key={item} href={`#${item.toLowerCase()}`} className="border-b border-transparent py-1 opacity-80 transition-all hover:border-current hover:opacity-100">{item}</a>)}
         </nav>
-      </header>
+        <button type="button" aria-label="Open workspace" onClick={() => onEnter("Advice")} className="group inline-flex items-center gap-2 rounded-[2px] border border-current px-3.5 py-2.5 text-[11px] font-bold transition-transform hover:-translate-y-0.5 active:scale-[0.97]">
+          <span className="hidden sm:inline">Open workspace</span><ArrowSquareOut size={15} className="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+        </button>
+      </motion.header>
 
-      <main id="top">
-        <section className="relative mx-auto grid min-h-[calc(100dvh-68px)] max-w-7xl grid-cols-1 items-center gap-12 px-4 py-14 sm:px-6 md:py-20 lg:grid-cols-[1.08fr_0.92fr] lg:gap-20 lg:px-8">
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={{ visible: { transition: { staggerChildren: 0.12 } } }}
-            className="relative"
-          >
-            <motion.p variants={reveal} className="mb-7 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--olive)]">
-              Indian legal research · with receipts
-            </motion.p>
-            <motion.h1 variants={reveal} className="max-w-[720px] text-5xl font-semibold leading-[0.96] tracking-[-0.06em] text-[var(--ink)] sm:text-6xl lg:text-[4.6rem]">
-              Useful legal information without invented authority.
-            </motion.h1>
-            <motion.p variants={reveal} className="mt-7 max-w-[58ch] text-base leading-relaxed text-[var(--ink-muted)] sm:text-lg">
-              Ask against the law currently loaded. Vakeel retrieves the provision, verifies every citation, and refuses areas it cannot support.
-            </motion.p>
-            <motion.div variants={reveal} className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <MagneticButton onClick={() => onEnter("Advice")}>Start with Advice</MagneticButton>
-              <MagneticButton onClick={() => onEnter("Research")} secondary>Open Research mode</MagneticButton>
-            </motion.div>
-            <motion.div variants={reveal} className="mt-10 flex flex-wrap gap-x-7 gap-y-3 text-xs text-[var(--ink-muted)]">
-              {["Exact source text", "Visible coverage limits", "Local conversation history"].map((item) => (
-                <span key={item} className="inline-flex items-center gap-2">
-                  <CheckCircle size={15} weight="fill" className="text-[var(--olive)]" aria-hidden="true" /> {item}
-                </span>
-              ))}
-            </motion.div>
-          </motion.div>
+      <main>
+        <SuitReveal onEnter={onEnter} />
 
-          <motion.div
-            initial={{ opacity: 0, x: 44, rotate: 1.5 }}
-            animate={{ opacity: 1, x: 0, rotate: 0 }}
-            transition={{ delay: 0.15, ...SPRING }}
-            className="relative lg:-mr-5"
-          >
-            <motion.div
-              aria-hidden="true"
-              animate={reduceMotion ? undefined : { y: [0, -12, 0], rotate: [0, 2, 0] }}
-              transition={{ duration: 7, repeat: Infinity, ...SPRING }}
-              className="absolute -left-7 -top-8 h-24 w-24 rounded-[1.7rem] bg-[var(--sage)]/35"
-            />
-            <ScenarioPreview />
-          </motion.div>
+        <section className="bg-[var(--paper)] px-[clamp(22px,8vw,136px)] py-[clamp(94px,13vw,190px)]">
+          <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--forest)]"><span className="text-[var(--stone)]">01</span><span>What an answer should show</span><span className="h-px w-24 bg-current opacity-40" /></div>
+          <div className="mt-[clamp(50px,7vw,105px)] grid items-end gap-[clamp(54px,9vw,160px)] lg:grid-cols-[0.85fr_1.15fr]">
+            <motion.div {...reveal}>
+              <p className="mb-4 font-mono text-[10px] uppercase tracking-[0.11em] text-[var(--forest)]">A legal answer is not a performance.</p>
+              <h2 className="font-serif text-[clamp(50px,6vw,90px)] font-semibold leading-[0.87] tracking-[-0.06em]">The authority stays visible.</h2>
+              <p className="mt-6 max-w-md text-sm leading-[1.7] text-[var(--ink-muted)]">A clear response shows its work: the provision, the reasoning, and the detail that could change the outcome.</p>
+              <button type="button" onClick={() => onEnter("Advice")} className="group mt-7 inline-flex items-center gap-2 font-mono text-[11px] font-medium text-[var(--forest)]">Open a cited question <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" /></button>
+            </motion.div>
+            <motion.article initial={{ opacity: 0, rotate: -1, y: 35 }} whileInView={{ opacity: 1, rotate: 1.2, y: 0 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.72, ease: [0.23, 1, 0.32, 1] }} className="relative overflow-hidden border border-[var(--line)] bg-[var(--taupe)] p-5 shadow-[19px_22px_0_rgba(0,0,0,0.09),0_25px_48px_rgba(0,0,0,0.10)] sm:p-6">
+              <div className="flex justify-between border-b border-[var(--line)] pb-4 font-mono text-[9px] uppercase tracking-[0.07em] text-[var(--ink-muted)]"><span className="flex items-center gap-1.5"><Sparkle size={15} />Advice preview</span><span className="rounded-full bg-[var(--paper)]/80 px-2.5 py-1 normal-case tracking-normal">Sale of goods</span></div>
+              <p className="ml-auto mt-5 max-w-[78%] rounded-[17px_17px_3px_17px] bg-[var(--forest)] p-4 text-xs leading-[1.55] text-[var(--paper)]">The delivered goods do not match the seller&apos;s description. What should I do?</p>
+              <div className="mt-2 rounded-[18px_18px_18px_3px] bg-white/85 p-5 text-xs leading-[1.65] shadow-sm">
+                <p>Start with <strong>Section 15</strong>: goods sold by description must correspond with that description. Keep the listing, invoice, and delivery photos, then notify the seller in writing before treating the goods as accepted.</p>
+                <a href="https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf" target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 border-t border-[var(--line)] pt-3 font-mono text-[9px] text-[var(--forest)]">Sale of Goods Act, 1930 · Section 15 <ArrowSquareOut size={14} /></a>
+              </div>
+            </motion.article>
+          </div>
         </section>
 
-        <StatuteRibbon />
-
-        <section id="method" className="bg-[var(--ivory)]">
-          <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 md:py-32 lg:px-8">
-          <SectionHeading
-            eyebrow="The method"
-            title="The answer is the final step, not the first guess."
-            body="The system separates retrieval from generation. That makes each stage testable and keeps a fluent model from quietly deciding what the law says."
-          />
-          <div className="mt-16 border-t border-[var(--line-strong)]">
-            {steps.map(([number, title, body], index) => (
-              <motion.div
-                key={number}
-                initial={{ opacity: 0, x: index % 2 ? 26 : -26 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true, amount: 0.45 }}
-                transition={{ delay: index * 0.05, ...SPRING }}
-                className="grid grid-cols-[44px_1fr] gap-4 border-b border-[var(--line)] py-7 sm:grid-cols-[80px_180px_1fr] sm:items-center"
-              >
-                <span className="font-mono text-xs text-[var(--olive)]">{number}</span>
-                <h3 className="text-xl font-semibold tracking-[-0.03em]">{title}</h3>
-                <p className="col-start-2 max-w-[58ch] text-sm leading-relaxed text-[var(--ink-muted)] sm:col-start-3">{body}</p>
-              </motion.div>
+        <section id="method" className="grid gap-[clamp(56px,10vw,180px)] bg-[var(--paper-deep)] px-[clamp(22px,8vw,136px)] py-[clamp(94px,13vw,190px)] lg:grid-cols-[0.76fr_1.24fr]">
+          <motion.div {...reveal} className="self-start lg:sticky lg:top-28">
+            <p className="mb-4 font-mono text-[10px] uppercase tracking-[0.11em] text-[var(--forest)]">The method</p>
+            <h2 className="font-serif text-[clamp(50px,6vw,88px)] font-semibold leading-[0.87] tracking-[-0.06em]">The answer is the final step, not the first guess.</h2>
+            <p className="mt-6 max-w-md text-sm leading-[1.7] text-[var(--ink-muted)]">The system separates retrieval from generation, making every stage inspectable and keeping fluent language from silently deciding what the law says.</p>
+          </motion.div>
+          <div className="border-t border-[var(--line)]">
+            {METHOD.map(([number, title, body, Icon], index) => (
+              <motion.article key={title} initial={{ opacity: 0, x: 30 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, amount: 0.55 }} transition={{ delay: index * 0.06, duration: 0.55, ease: [0.23, 1, 0.32, 1] }} className="group grid grid-cols-[38px_32px_1fr_20px] gap-3 border-b border-[var(--line)] py-6 transition-[padding,color] duration-200 hover:px-3 hover:text-[var(--forest)] sm:grid-cols-[48px_39px_1fr_22px] sm:gap-4">
+                <span className="pt-1 font-mono text-[10px] text-[var(--stone)]">{number}</span><Icon size={22} className="text-[var(--forest)]" /><div><h3 className="font-serif text-3xl font-semibold leading-none tracking-[-0.03em]">{title}</h3><p className="mt-2 max-w-sm text-xs leading-[1.65] text-[var(--ink-muted)]">{body}</p></div><CaretRight size={21} className="mt-1 transition-transform group-hover:translate-x-1" />
+              </motion.article>
             ))}
           </div>
+        </section>
+
+        <section id="coverage" className="bg-[var(--paper)] px-[clamp(22px,8vw,136px)] py-[clamp(90px,11vw,150px)]">
+          <motion.div {...reveal} className="grid gap-8 border-b border-[var(--line-strong)] pb-10 md:grid-cols-[0.72fr_1.28fr] md:items-end">
+            <div><p className="font-mono text-[10px] uppercase tracking-[0.11em] text-[var(--forest)]">Current coverage</p><h2 className="mt-4 font-serif text-[clamp(48px,6vw,84px)] font-semibold leading-[0.86] tracking-[-0.06em]">Questions grounded in 22 loaded statutes.</h2></div>
+            <p className="max-w-xl text-sm leading-[1.7] text-[var(--ink-muted)]">These are the instruments the assistant can search now. It refuses unsupported areas instead of attaching a vaguely related law.</p>
+          </motion.div>
+          <div className="grid md:grid-cols-2 md:gap-x-12">
+            {LAWS.map(([title, body], index) => <motion.div key={title} initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.7 }} transition={{ delay: (index % 4) * 0.035 }} className="grid grid-cols-[32px_1fr] gap-3 border-b border-[var(--line)] py-5"><span className="pt-1 font-mono text-[9px] text-[var(--stone)]">{String(index + 1).padStart(2, "0")}</span><div><h3 className="text-sm font-semibold">{title}</h3><p className="mt-1 text-xs leading-relaxed text-[var(--ink-muted)]">{body}</p></div></motion.div>)}
           </div>
         </section>
 
-        <section id="modes" className="border-y border-[var(--line)] bg-[var(--sage-soft)]">
-          <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 md:py-32 lg:px-8">
-            <SectionHeading eyebrow="Two modes" title="Choose the shape of the work, not a pretend job title." />
-            <div className="mt-14 grid grid-cols-1 gap-5 lg:grid-cols-[0.86fr_1.14fr]">
-              <motion.div
-                whileHover={{ y: -5 }}
-                transition={SPRING}
-                className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--taupe)]/55 p-7 sm:p-9"
-              >
-                <Quotes size={28} weight="duotone" className="text-[var(--olive)]" aria-hidden="true" />
-                <p className="mt-12 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--olive)]">Advice</p>
-                <h3 className="mt-3 text-3xl font-semibold tracking-[-0.04em]">Direct and practical</h3>
-                <p className="mt-4 max-w-[44ch] text-sm leading-relaxed text-[var(--ink-muted)]">A clear explanation of the governing provision, what it means for the facts supplied, and what information is still missing.</p>
-              </motion.div>
-              <motion.div
-                whileHover={{ y: -5 }}
-                transition={SPRING}
-                className="relative overflow-hidden rounded-[2rem] bg-[var(--olive-dark)] p-7 text-[var(--ivory)] sm:p-9"
-              >
-                <BookOpenText size={30} weight="duotone" className="text-[var(--sage)]" aria-hidden="true" />
-                <motion.div
-                  aria-hidden="true"
-                  animate={reduceMotion ? undefined : { x: [0, 180, 0] }}
-                  transition={{ duration: 9, repeat: Infinity, ...SPRING }}
-                  className="absolute right-12 top-12 h-px w-44 bg-gradient-to-r from-transparent via-[var(--sage)] to-transparent opacity-40"
-                />
-                <p className="mt-12 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--sage)]">Research</p>
-                <h3 className="mt-3 text-3xl font-semibold tracking-[-0.04em]">Structured and auditable</h3>
-                <p className="mt-4 max-w-[52ch] text-sm leading-relaxed text-white/58">An IRAC-formatted note with rules, authorities, application, counterargument, conclusion, and independently verified citations.</p>
-              </motion.div>
-            </div>
-          </div>
-        </section>
-
-        <section id="safety" className="mx-auto grid max-w-7xl grid-cols-1 gap-14 px-4 py-24 sm:px-6 md:py-32 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
-          <SectionHeading eyebrow="Safety by construction" title="Fluency is never treated as evidence." body="The app is intentionally narrow. It exposes what is loaded, strips unsupported claims, and keeps uploaded documents out of model prompts." />
-          <motion.div
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, amount: 0.25 }}
-            variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
-            className="divide-y divide-[var(--line)] border-y border-[var(--line-strong)]"
-          >
-            {[
-              [ShieldCheck, "Closed-set citations", "The model can cite only source labels supplied by retrieval."],
-              [Fingerprint, "Unsupported areas refused", "Missing law is reported instead of replaced by a vaguely related section."],
-              [FileText, "Documents remain data", "Uploaded clauses are parsed deterministically and never treated as instructions."],
-            ].map(([Icon, title, body]) => (
-              <motion.div variants={reveal} key={title} className="grid grid-cols-[38px_1fr] gap-4 py-7">
-                <Icon size={24} weight="duotone" className="text-[var(--olive)]" aria-hidden="true" />
-                <div>
-                  <h3 className="font-semibold tracking-[-0.02em]">{title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink-muted)]">{body}</p>
-                </div>
-              </motion.div>
+        <section id="modes" className="bg-[#111111] px-[clamp(22px,8vw,136px)] py-[clamp(90px,12vw,180px)] text-[var(--paper)]">
+          <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-white/70"><span className="text-white/40">02</span><span>Two modes</span><span className="h-px w-24 bg-current opacity-40" /></div>
+          <motion.div {...reveal} className="mt-20 max-w-3xl md:ml-[16%]"><p className="font-mono text-[10px] uppercase tracking-[0.11em] text-white/70">Work that fits the question</p><h2 className="mt-4 font-serif text-[clamp(50px,6vw,90px)] font-semibold leading-[0.87] tracking-[-0.06em] text-white">Choose the shape of the work, not a pretend job title.</h2></motion.div>
+          <div className="mt-[clamp(70px,9vw,125px)] grid gap-px bg-white/20 md:grid-cols-2">
+            {[["A", "Advice", "Direct and practical", "A clear explanation of the governing provision, what it means for the facts supplied, and which missing detail changes the answer."], ["R", "Research", "Structured and auditable", "An IRAC-formatted note with rules, authorities, application, counterargument, conclusion, and independently verified citations."]].map(([index, mode, title, body]) => (
+              <motion.button key={mode} type="button" onClick={() => onEnter(mode)} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} whileHover={{ backgroundColor: "#1c1c1c" }} className="group grid min-h-[360px] grid-cols-[48px_1fr] gap-x-5 bg-[#111111] p-[clamp(28px,4vw,60px)] text-left">
+                <span className="row-span-3 font-serif text-5xl leading-[0.8] text-white/70">{index}</span><div><p className="font-mono text-[10px] uppercase tracking-[0.08em] text-white/70">{mode}</p><h3 className="mt-2 font-serif text-[clamp(34px,3vw,48px)] font-semibold leading-[0.88] tracking-[-0.05em]">{title}</h3></div><p className="self-end text-[13px] leading-[1.75] text-white/70">{body}</p><span className="inline-flex items-center gap-2 font-mono text-[10px] text-white/75">{mode === "Advice" ? "Start with Advice" : "Open Research"}<ArrowRight size={17} className="transition-transform group-hover:translate-x-1" /></span>
+              </motion.button>
             ))}
-          </motion.div>
+          </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-4 pb-24 sm:px-6 lg:px-8">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true, amount: 0.45 }}
-            transition={SPRING}
-            className="grid gap-8 rounded-[2rem] border border-[var(--line-strong)] bg-[var(--taupe)] p-7 sm:p-10 md:grid-cols-[1fr_auto] md:items-end"
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--olive-dark)]">Ask · understand · verify</p>
-              <h2 className="mt-5 max-w-2xl text-3xl font-semibold leading-tight tracking-[-0.045em] sm:text-5xl">Start with the question. Inspect the authority yourself.</h2>
-            </div>
-            <MagneticButton onClick={() => onEnter("Advice")}>Open Vakeel AI</MagneticButton>
-          </motion.div>
+        <section id="safety" className="grid gap-[clamp(68px,12vw,190px)] bg-[var(--paper)] px-[clamp(22px,8vw,136px)] py-[clamp(94px,13vw,190px)] lg:grid-cols-[0.83fr_1.17fr]">
+          <motion.div {...reveal}><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--forest)]"><span className="text-[var(--stone)]">03</span><span>Safety by construction</span></div><h2 className="mt-11 font-serif text-[clamp(50px,6vw,90px)] font-semibold leading-[0.87] tracking-[-0.06em]">Fluency is never treated as evidence.</h2></motion.div>
+          <div className="divide-y divide-[var(--line)]">
+            {[[SealCheck, "Closed-set citations", "The model can cite only source labels supplied by retrieval."], [ShieldCheck, "Unsupported areas refused", "Missing law is reported instead of replaced with a vaguely related section."], [BookOpenText, "Documents remain data", "Uploaded clauses are parsed deterministically and never treated as instructions."]].map(([Icon, title, body], index) => <motion.article key={title} initial={{ opacity: 0, x: 24 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, amount: 0.65 }} transition={{ delay: index * 0.08 }} className="py-8"><Icon size={28} className="text-[var(--forest)]" /><h3 className="mt-3 font-serif text-3xl font-semibold tracking-[-0.035em]">{title}</h3><p className="mt-2 max-w-md text-[13px] leading-[1.72] text-[var(--ink-muted)]">{body}</p></motion.article>)}
+          </div>
+        </section>
+
+        <section className="relative grid min-h-[620px] items-end overflow-hidden bg-[#161616] text-[var(--paper)]">
+          <motion.div initial={{ scale: 1.08 }} whileInView={{ scale: 1 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 1.7, ease: [0.23, 1, 0.32, 1] }} className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/vakeelai-law-library_9447c9ff.png')" }} />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.92)_0%,rgba(0,0,0,0.74)_47%,rgba(0,0,0,0.16)_100%)]" />
+          <motion.div {...reveal} className="relative z-10 max-w-4xl p-[clamp(48px,8vw,130px)]"><p className="font-mono text-[10px] uppercase tracking-[0.11em] text-white/70">Ask · understand · verify</p><h2 className="mt-4 font-serif text-[clamp(50px,6vw,90px)] font-semibold leading-[0.87] tracking-[-0.06em] text-white">Start with the question. Inspect the authority yourself.</h2><button type="button" onClick={() => onEnter("Advice")} className="group mt-8 inline-flex min-h-12 items-center gap-2 rounded-[2px] bg-[var(--paper)] px-5 text-xs font-bold text-[var(--ink)] transition-transform hover:-translate-y-1 active:scale-[0.97]">Open VakeelAI <ArrowRight size={17} className="transition-transform group-hover:translate-x-1" /></button></motion.div>
         </section>
       </main>
 
-      <footer className="border-t border-[var(--line)]">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-7 text-xs text-[var(--ink-muted)] sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <span>Vakeel AI · Citation-verified Indian legal information</span>
-          <span>Information, not representation by a licensed lawyer.</span>
-        </div>
+      <footer className="grid gap-3 bg-[#0c0c0c] px-[clamp(22px,4vw,60px)] py-6 font-mono text-[9px] text-white/55 md:grid-cols-[1fr_auto_1fr] md:items-center">
+        <a href="#top" className="text-white"><BrandMark compact /></a><p>VakeelAI · Citation-verified Indian legal information</p><p className="md:text-right">Information, not representation by a licensed lawyer.</p>
       </footer>
     </div>
   );

@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { List, SidebarSimple } from "@phosphor-icons/react";
+import { ArrowLeft, List, SidebarSimple } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import Sidebar from "./components/Sidebar.jsx";
 import ModeToggle from "./components/ModeToggle.jsx";
 import SearchBar from "./components/SearchBar.jsx";
 import ChatArea from "./components/ChatArea.jsx";
-import BrandMark from "./components/BrandMark.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import { useIsMobile } from "./hooks/useIsMobile.js";
 import { apiUrl } from "./lib/api.js";
@@ -221,7 +220,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
   const activeTitle = activeConversation?.title ?? null;
 
   return (
-    <div className="flex h-[100dvh] min-h-[100dvh] w-full overflow-hidden font-sans bg-[var(--canvas)] text-[var(--ink)]">
+    <div className="workspace-shell-app flex h-[100dvh] min-h-[100dvh] w-full overflow-hidden bg-[var(--canvas)] text-[var(--ink)]">
       <Sidebar
         isOpen={sidebarOpen}
         isMobile={isMobile}
@@ -233,23 +232,26 @@ function Workspace({ onHome, initialMode = "Advice" }) {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 bg-[var(--canvas)]">
-        <header className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-[var(--line)] bg-[color:var(--sage-soft)]/90 backdrop-blur flex-shrink-0">
+      <div className="workspace-main-app flex min-w-0 flex-1 flex-col bg-[var(--canvas)]">
+        <header className="workspace-topbar-app flex min-h-[72px] flex-shrink-0 items-center justify-between border-b border-[var(--line)] bg-[color:var(--canvas)]/90 px-4 backdrop-blur sm:px-8">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSidebarOpen((p) => !p)}
-              className="p-2 rounded-lg hover:bg-[var(--sage-soft)] transition-colors text-[var(--ink-muted)] hover:text-[var(--ink)] flex-shrink-0"
+              className="flex-shrink-0 p-2 text-[var(--ink-muted)] transition-colors hover:bg-[var(--sage-soft)] hover:text-[var(--ink)]"
               aria-label="Toggle sidebar"
             >
               {isMobile ? <List size={20} weight="bold" /> : <SidebarSimple size={17} weight={sidebarOpen ? "fill" : "regular"} />}
             </button>
-            {activeTitle ? (
-              <h1 className="text-sm font-medium text-[var(--ink-muted)] truncate max-w-[120px] sm:max-w-xs">{activeTitle}</h1>
-            ) : (
-              <button type="button" onClick={onHome} aria-label="Back to Vakeel AI home" className="rounded-xl text-[var(--ink)]">
-                <BrandMark compact />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={onHome}
+              aria-label="Back to landing page"
+              className="group inline-flex items-center gap-2 font-mono text-[10px] font-medium text-[var(--forest)] transition-all duration-200 hover:gap-3 active:scale-[0.98]"
+            >
+              <ArrowLeft size={14} weight="bold" className="transition-transform duration-300 group-hover:-translate-x-0.5" />
+              <span>Back to landing page</span>
+            </button>
+            {activeTitle && <><span aria-hidden="true" className="h-5 w-px bg-[var(--line)]" /><h1 className="max-w-[110px] truncate text-xs font-medium text-[var(--ink-muted)] sm:max-w-xs">{activeTitle}</h1></>}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">

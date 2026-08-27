@@ -95,16 +95,20 @@ concrete hypothesis for why, written up in
 
 ## Corpus
 
-- **Indian Contract Act, 1872** (266 sections)
-- **Consumer Protection Act, 2019** (107 sections)
-- **Sale of Goods Act, 1930** (66 sections)
-- **Bharatiya Nyaya Sanhita, 2023** (358 sections)
+- **22 verified statutes and rulebooks** are indexed in the product corpus,
+  including the Motor Vehicles Act, 1988 (257 sections), Central Motor
+  Vehicles Rules, 1989 (195 rules), and Karnataka Motor Vehicles Rules, 1989
+  (268 rules), alongside contract, consumer, criminal, property, procedure,
+  evidence, technology and Karnataka land/rent instruments.
 - **AILA** — 2,914 Supreme Court judgments + statutes with relevance
   judgments (evaluation-only, kept separate from the sources the assistant
   actually answers from)
 
-All statute text comes from official India Code bitstream URLs, which are
-stored per-section and surfaced as "official source" links in the UI.
+Statute text comes from official India Code bitstream URLs where available,
+stored per-provision and surfaced as source links in the UI. The Karnataka
+Motor Vehicles Rules use an archived Karnataka government consolidation from
+2017 because the current government PDF endpoint is unavailable; answers show
+that version limitation and should be checked against later gazettes.
 
 ## Architecture
 
@@ -171,10 +175,10 @@ AILA evaluation set is loaded from its own archive.
 
 ## Known limitations
 
-- No tenancy/rent-control law is loaded, so landlord-tenant questions are
-  explicitly refused rather than matched to a loosely related statute. The
-  same coverage gate handles several other clearly unsupported areas such as
-  family, labour, constitutional, property, and tax law.
+- Family, labour, and tax questions remain outside the verified product
+  corpus and are explicitly refused rather than matched to a loosely related
+  statute. Property, tenancy, land and constitutional material is covered by
+  the current catalogue.
 - Cross-encoder reranking remains optional because its Windows CPU startup
   cost is too high for the default local demo; the deterministic lexical
   reranker is the production baseline.
