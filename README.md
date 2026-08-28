@@ -1,11 +1,12 @@
 # Vakeel AI
 
 A citation-verified legal research assistant for Indian law. Its live product
-answers use retrieval-augmented generation over four Indian statutes; Supreme
-Court judgments are currently kept in a separate evaluation corpus. It cannot cite anything it wasn't actually given
-evidence for — every citation is checked against the retrieved sources before
-it reaches the user, so a fabricated case or section is structurally
-impossible rather than merely detected after the fact.
+answers use retrieval-augmented generation over 22 Indian statutes and
+rulebooks; Supreme Court judgments are currently kept in a separate
+evaluation corpus. It cannot cite anything it wasn't actually given evidence
+for — every citation is checked against the retrieved sources before it
+reaches the user, so a fabricated case or section is structurally impossible
+rather than merely detected after the fact.
 
 Uses SQLite locally and supports a free-provider chain for generation:
 Gemini, then Groq, then local Ollama. If every model provider is unavailable,
