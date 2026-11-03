@@ -1,0 +1,48 @@
+name: Deploy backend to Hugging Face Space
+
+# Needs two repository settings (Settings > Secrets and variables > Actions):
+#   secret   HF_TOKEN  a Hugging Face access token with write permission
+#   variable HF_SPACE  the Space id, e.g. your-username/vakeel-ai
+# Until both exist this workflow is skipped, so it is safe to merge first.
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - "deploy/hf-space/**"
+      - ".github/workflows/deploy-hf.yml"
+
+concurrency:
+  group: deploy-hf
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ vars.HF_SPACE != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the Space repository
+        run: |
+          set -euo pipefail
+          mkdir space
+          cp -r backend/. space/
+          cp deploy/hf-space/README.md space/README.md
+          rm -rf space/tests space/data space/.venv
+          find space -name "__pycache__" -type d -prune -exec rm -rf {} +
+
+      - name: Push to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          set -euo pipefail
+          cd space
+          git init -q -b main
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" main

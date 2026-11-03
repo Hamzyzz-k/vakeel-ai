@@ -137,3 +137,22 @@ def test_jurisdiction_missing_is_flagged():
     state.jurisdiction = {"country": None}
     apply_safety_checks(state)
     assert "jurisdiction_missing" in state.safety_flags
+
+
+def test_infer_supported_domains_returns_every_anchored_domain():
+    from app.pipeline.safety import infer_supported_domains
+
+    domains = infer_supported_domains("My cheque bounced and the police registered an FIR")
+    assert "commercial" in domains
+    assert "criminal_procedure" in domains
+
+
+def test_evidence_block_lists_allowed_labels_and_warns_against_section_numbers():
+    sources = [
+        RetrievedSource(label="S1", source_id="a", title="Act - Section 45", text="Text one.", source_type="SECTION"),
+        RetrievedSource(label="S2", source_id="b", title="Act - Section 16", text="Text two.", source_type="SECTION"),
+    ]
+    block = build_evidence_block(sources)
+    assert "Cite ONLY these labels: [S1], [S2]." in block
+    assert "never \"[S45]\"" in block
+    assert block.index("Cite ONLY") < block.index("LEGAL TEXT")

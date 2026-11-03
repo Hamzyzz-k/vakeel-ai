@@ -17,8 +17,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-from app.api.chat import _db_lock, _get_repo
+from app.api.chat import _get_repo
 from app.documents.analyzer import analyze_document
 from app.documents.extractor import extract_document
 
@@ -73,16 +74,21 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentAnalysisOut:
         if b"\x00" in file_bytes[:4096]:
             raise HTTPException(status_code=400, detail="Binary content is not accepted as a text document")
 
+    # This handler is async (the upload is read with await), so anything
+    # blocking must leave the event loop. PDF parsing is CPU-bound and
+    # analysis runs SQLite queries; run inline, either one stalls every
+    # other request, /health included, until it finishes.
     try:
-        doc = extract_document(file_bytes, filename)
+        doc = await run_in_threadpool(extract_document, file_bytes, filename)
     except Exception as exc:  # noqa: BLE001 -- a corrupt/unreadable upload is a client error, not a crash
         raise HTTPException(status_code=422, detail=f"Could not extract text from this file: {exc}") from exc
 
     if not doc.full_text.strip():
         raise HTTPException(status_code=422, detail="No extractable text found -- this may be a scanned image PDF (OCR is not supported in this phase)")
 
-    with _db_lock:  # see app/api/chat.py's _db_lock docstring
-        analysis = analyze_document(doc, _get_repo())
+    # _get_repo() may build the repository (schema init) on first use, so it
+    # runs inside the worker thread too.
+    analysis = await run_in_threadpool(lambda: analyze_document(doc, _get_repo()))
 
     return DocumentAnalysisOut(
         filename=filename,

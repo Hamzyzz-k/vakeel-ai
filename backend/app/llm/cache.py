@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
 
 from app.config import CORPUS_DB_PATH
 from app.corpus.schema import get_connection, init_db
@@ -28,23 +29,30 @@ class LLMCache:
         self.db_path = db_path or str(CORPUS_DB_PATH)
         init_db(self.db_path)
         self._conn: sqlite3.Connection = get_connection(self.db_path)
+        # One connection shared by concurrent API requests; each get/put is
+        # a single short statement, so a lock here is cheap and never held
+        # across an LLM call.
+        self._lock = threading.Lock()
 
     def get(self, provider: str, model: str, prompt: str) -> str | None:
         key = cache_key(provider, model, prompt)
-        row = self._conn.execute(
-            "SELECT response FROM llm_cache WHERE cache_key = ?", (key,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT response FROM llm_cache WHERE cache_key = ?", (key,)
+            ).fetchone()
         return row["response"] if row else None
 
     def put(self, provider: str, model: str, prompt: str, response: str) -> None:
         key = cache_key(provider, model, prompt)
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        self._conn.execute(
-            "INSERT OR REPLACE INTO llm_cache (cache_key, provider, model, prompt_hash, response) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (key, provider, model, prompt_hash, response),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO llm_cache (cache_key, provider, model, prompt_hash, response) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (key, provider, model, prompt_hash, response),
+            )
+            self._conn.commit()
 
     def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) c FROM llm_cache").fetchone()["c"]
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) c FROM llm_cache").fetchone()["c"]

@@ -25,6 +25,7 @@ backend/data/corpus.db-*
 backend/data/vecindex_*
 backend/data/rhetorical_role_model.joblib
 backend/data/eval_reports/*.json
+backend/data/eval_reports/*.jsonl
 backend/data/PHASE0_RECON.md
 backend/data/test_lease_agreement.pdf
 

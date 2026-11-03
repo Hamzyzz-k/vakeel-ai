@@ -25,28 +25,29 @@ _repo: SQLiteCorpusRepository | None = None
 _llm: LLMProvider | None = None
 
 # FastAPI dispatches sync ('def') route handlers to a worker threadpool, so
-# the single shared SQLite connection above CAN be touched by two requests
-# on two different threads at once. sqlite3.Connection is not safe for
-# genuinely concurrent use even with check_same_thread=False (see
-# app/corpus/schema.py's get_connection). This lock serializes access at
-# the actual concurrency boundary -- request handling -- rather than deep
-# inside the repository, where dozens of call sites hold the connection
-# across multiple .execute() calls and a lock on _conn() alone wouldn't
-# cover the gap between them.
-_db_lock = threading.Lock()
+# requests run concurrently. That used to need a global lock around the
+# whole pipeline because one SQLite connection was shared by every thread;
+# the repository now gives each thread its own connection and the LLM cache
+# locks its own, so requests no longer queue behind each other's LLM calls.
+# This lock only guards the lazy creation of the two singletons below.
+_init_lock = threading.Lock()
 
 
 def _get_repo() -> SQLiteCorpusRepository:
     global _repo
     if _repo is None:
-        _repo = SQLiteCorpusRepository(str(CORPUS_DB_PATH))
+        with _init_lock:
+            if _repo is None:
+                _repo = SQLiteCorpusRepository(str(CORPUS_DB_PATH))
     return _repo
 
 
 def _get_llm() -> LLMProvider:
     global _llm
     if _llm is None:
-        _llm = LLMProvider()
+        with _init_lock:
+            if _llm is None:
+                _llm = LLMProvider()
     return _llm
 
 
@@ -114,25 +115,18 @@ def _source_out(s, repo: SQLiteCorpusRepository, supports: list[str] | None = No
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
-    # Locks for the whole pipeline call, LLM generation included, not just
-    # the DB access -- coarser than necessary for a multi-user service (it
-    # serializes concurrent requests behind each other's full LLM latency),
-    # but this project is explicitly single-local-user scope (no auth/roles
-    # until that's actually needed), so correctness over the SQLite race
-    # wins over throughput no real user needs yet.
-    with _db_lock:
-        state = run_query(req.message, _get_repo(), _get_llm(), mode=req.mode)
-        claims_by_label: dict[str, list[str]] = {}
-        for claim in state.verified_claims:
-            for label in claim.cited_labels:
-                claims_by_label.setdefault(label, []).append(claim.sentence)
-        # The UI should show authorities actually used in the answer, not
-        # every candidate the retriever considered.
-        sources = [
-            _source_out(s, _get_repo(), claims_by_label[s.label])
-            for s in state.retrieved_sources
-            if s.label in claims_by_label
-        ]
+    state = run_query(req.message, _get_repo(), _get_llm(), mode=req.mode)
+    claims_by_label: dict[str, list[str]] = {}
+    for claim in state.verified_claims:
+        for label in claim.cited_labels:
+            claims_by_label.setdefault(label, []).append(claim.sentence)
+    # The UI should show authorities actually used in the answer, not
+    # every candidate the retriever considered.
+    sources = [
+        _source_out(s, _get_repo(), claims_by_label[s.label])
+        for s in state.retrieved_sources
+        if s.label in claims_by_label
+    ]
     return ChatResponse(
         answer=state.final_answer,
         abstained=state.abstained,

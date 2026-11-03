@@ -4,6 +4,8 @@ here as each phase lands (api/chat.py, api/research.py, ...).
 """
 from __future__ import annotations
 
+import threading
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -29,6 +31,7 @@ app.add_middleware(
     RateLimitMiddleware,
     max_requests=settings.rate_limit_requests,
     window_seconds=settings.rate_limit_window_seconds,
+    trusted_proxy_hops=settings.trusted_proxy_hops,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.trusted_hosts))
 app.add_middleware(
@@ -38,6 +41,25 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.on_event("startup")
+def _warm_vector_index() -> None:
+    # Loading the embedder takes ~13s on CPU (measured). Lazily, the first
+    # user after every restart paid it inside their query; load it in the
+    # background instead so /health answers immediately meanwhile.
+    if not settings.enable_vector_retrieval:
+        return
+
+    def warm() -> None:
+        from app.pipeline.graph import PRODUCT_VECTOR_INDEX
+        from app.retrieval.vectors import embed_texts
+
+        if PRODUCT_VECTOR_INDEX.exists():
+            PRODUCT_VECTOR_INDEX.load()
+            embed_texts(["warm-up"])
+
+    threading.Thread(target=warm, name="vector-warmup", daemon=True).start()
 
 
 app.include_router(chat_router)

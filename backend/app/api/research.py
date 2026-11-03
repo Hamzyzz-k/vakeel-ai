@@ -12,7 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.api.chat import _db_lock, _get_repo
+from app.api.chat import _get_repo
 from app.pipeline.citation_graph import build_citation_graph, build_precedent_map
 
 router = APIRouter(prefix="/api/v1", tags=["research"])
@@ -33,21 +33,20 @@ class PrecedentMapOut(BaseModel):
 
 @router.get("/precedent-map/{source_id:path}", response_model=PrecedentMapOut)
 def precedent_map(source_id: str) -> PrecedentMapOut:
-    with _db_lock:  # see app/api/chat.py's _db_lock docstring
-        repo = _get_repo()
-        if repo.get_source(source_id) is None:
-            raise HTTPException(status_code=404, detail=f"No source with id {source_id!r}")
+    repo = _get_repo()
+    if repo.get_source(source_id) is None:
+        raise HTTPException(status_code=404, detail=f"No source with id {source_id!r}")
 
-        graph = build_citation_graph(repo)
-        nodes = build_precedent_map(repo, graph, source_id)
-        node = nodes[0]
+    graph = build_citation_graph(repo)
+    nodes = build_precedent_map(repo, graph, source_id)
+    node = nodes[0]
 
-        edges_out = []
-        for relationship, direction, other_id in node.edges:
-            other = repo.get_source(other_id)
-            edges_out.append(PrecedentEdgeOut(
-                relationship=relationship, direction=direction, other_id=other_id,
-                other_title=other["title"] if other else None,
-            ))
+    edges_out = []
+    for relationship, direction, other_id in node.edges:
+        other = repo.get_source(other_id)
+        edges_out.append(PrecedentEdgeOut(
+            relationship=relationship, direction=direction, other_id=other_id,
+            other_title=other["title"] if other else None,
+        ))
 
     return PrecedentMapOut(source_id=node.source_id, title=node.title, edges=edges_out)

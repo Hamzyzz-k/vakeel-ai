@@ -103,7 +103,9 @@ function WelcomeView({ mode, onQuickPrompt }) {
 
 function WorkingStatus({ mode }) {
   const [step, setStep] = useState(0);
-  const stages = mode === "document"
+  const stages = mode === "waking"
+    ? [["Waking the server", "The free host sleeps when idle, so this first answer can take up to a minute"]]
+    : mode === "document"
     ? [
         ["Reading the uploaded document", "Extracting clauses and headings"],
         ["Checking clause structure", "Separating sections without changing the text"],
@@ -364,7 +366,7 @@ function MessageBubble({ msg, onRetry }) {
   );
 }
 
-export default function ChatArea({ activeId, messages, isTyping, mode, onQuickPrompt, onRetry }) {
+export default function ChatArea({ activeId, messages, isTyping, serverWaking, mode, onQuickPrompt, onRetry }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -391,7 +393,7 @@ export default function ChatArea({ activeId, messages, isTyping, mode, onQuickPr
               <MessageBubble key={msg.id} msg={msg} onRetry={msg.retryQuestion ? () => onRetry(msg) : null} />
             ))}
 
-            {isTyping && <WorkingStatus mode="chat" />}
+            {isTyping && <WorkingStatus mode={serverWaking ? "waking" : "chat"} />}
 
             <div ref={bottomRef} />
           </motion.div>

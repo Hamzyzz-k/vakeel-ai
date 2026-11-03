@@ -158,6 +158,12 @@ _VEHICLE_FITNESS = re.compile(r"\b(?:fitness certificate|f\.?c\.?)\b", re.IGNORE
 _PRIVATE_VEHICLE = re.compile(r"\b(?:private|non[- ]transport|personal)\b.{0,50}\b(?:car|vehicle|bike|motorcycle|scooter)\b|\b(?:car|vehicle|bike|motorcycle|scooter)\b.{0,50}\b(?:private|non[- ]transport|personal)\b", re.IGNORECASE)
 _REGISTRATION_RENEWAL = re.compile(r"\b(?:renew|renewal|expir(?:e|ed|y)|registration certificate|r\.?c\.?)\b", re.IGNORECASE)
 _HELMET = re.compile(r"\bhelmet\b", re.IGNORECASE)
+_CHEQUE_DISHONOUR = re.compile(
+    r"\bcheques?\b.{0,80}\b(?:bounc\w*|dishonou?r\w*|insufficien\w* (?:of )?funds?|returned unpaid|stop(?:ped)? payment)\b"
+    r"|\b(?:bounc\w*|dishonou?r\w*)\b.{0,40}\bcheques?\b"
+    r"|\bcheck bounce\b",
+    re.IGNORECASE,
+)
 _DRUNK_DRIVING = re.compile(r"\b(?:drunk driving|drink and driv(?:e|ing)|driving under the influence|alcohol)\b", re.IGNORECASE)
 _PUC_OR_EMISSION = re.compile(r"\b(?:puc|pollution certificate|emission(?:s)?(?: certificate| test)?)\b", re.IGNORECASE)
 _UNREGISTERED_VEHICLE = re.compile(r"\b(?:without|no|expired)\b.{0,45}\b(?:registration|r\.?c\.?)\b|\bunregistered vehicle\b", re.IGNORECASE)
@@ -202,6 +208,15 @@ def extract_concept_references(query: str) -> list[StatuteReference]:
         # still control proof requirements, so the route must not imply that
         # every digital record is automatically admissible.
         references.append(StatuteReference("The Bharatiya Sakshya Adhiniyam, 2023", "61"))
+    if _CHEQUE_DISHONOUR.search(query):
+        # S138 creates the offence and its notice/payment windows; S142
+        # sets who may complain and the one-month limitation. Without this
+        # route, a "criminal case" phrasing pulled BNS lost-property and
+        # forgery sections instead of the Act that actually governs it.
+        references.extend([
+            StatuteReference("The Negotiable Instruments Act, 1881", "138"),
+            StatuteReference("The Negotiable Instruments Act, 1881", "142"),
+        ])
     if _NAMED_BREACH_SUM.search(query):
         references.append(StatuteReference("The Indian Contract Act, 1872", "74"))
     if _PRODUCT_WARNING_INJURY.search(query):

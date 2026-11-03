@@ -80,13 +80,15 @@ class LLMProvider:
 
     # -- provider implementations ----------------------------------------
 
-    def _call_gemini(self, prompt: str, json_schema: dict | None) -> str:
+    def _call_gemini(self, prompt: str, json_schema: dict | None, model: str) -> str:
         if not settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
 
         import httpx
 
-        payload: dict = {"model": settings.gemini_model, "input": prompt}
+        payload: dict = {"model": model, "input": prompt}
+        if settings.gemini_thinking_level:
+            payload["generation_config"] = {"thinking_level": settings.gemini_thinking_level}
         if json_schema is not None:
             payload["response_format"] = {
                 "type": "text",
@@ -131,17 +133,21 @@ class LLMProvider:
                 time.sleep(0.4 * (attempt + 1))
         raise RuntimeError(f"Gemini request failed: {last_error}")
 
-    def _call_groq(self, prompt: str, json_schema: dict | None) -> str:
+    def _call_groq(self, prompt: str, json_schema: dict | None, model: str) -> str:
         if not settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY not set")
 
         import httpx
 
         payload: dict = {
-            "model": settings.groq_model,
+            "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
         }
+        if settings.groq_reasoning_effort:
+            # The reasoning trace is never shown or stored; don't ship it.
+            payload["reasoning_effort"] = settings.groq_reasoning_effort
+            payload["include_reasoning"] = False
         if json_schema is not None:
             # The pipeline schemas intentionally leave most intake fields
             # optional. Groq's strict json_schema mode requires every field
@@ -194,7 +200,7 @@ class LLMProvider:
                 time.sleep(max(retry_after, 0.3 * (attempt + 1)))
         raise RuntimeError(f"Groq request failed: {last_error}")
 
-    def _call_ollama(self, prompt: str, json_schema: dict | None) -> str:
+    def _call_ollama(self, prompt: str, json_schema: dict | None, model: str) -> str:
         if self._ollama_client is None:
             import ollama
 
@@ -206,7 +212,7 @@ class LLMProvider:
             kwargs["format"] = json_schema
 
         response = self._ollama_client.chat(
-            model=settings.ollama_model,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             **kwargs,
         )
@@ -217,13 +223,16 @@ class LLMProvider:
     def generate(self, prompt: str, json_schema: dict | None = None, use_cache: bool = True) -> LLMResponse:
         errors: list[str] = []
 
-        for provider in self.provider_order:
-            models = {
+        for entry in self.provider_order:
+            # "groq" uses the configured default model; "groq:openai/gpt-oss-20b"
+            # names one. Free-tier quotas are per model, so listing a second
+            # model on the same provider adds capacity, not just redundancy.
+            provider, _, model = entry.partition(":")
+            model = model or {
                 "gemini": settings.gemini_model,
                 "groq": settings.groq_model,
                 "ollama": settings.ollama_model,
-            }
-            model = models.get(provider, provider)
+            }.get(provider, provider)
 
             if use_cache:
                 cached = self.cache.get(provider, model, prompt)
@@ -232,16 +241,16 @@ class LLMProvider:
 
             try:
                 if provider == "gemini":
-                    text = self._call_gemini(prompt, json_schema)
+                    text = self._call_gemini(prompt, json_schema, model)
                 elif provider == "groq":
-                    text = self._call_groq(prompt, json_schema)
+                    text = self._call_groq(prompt, json_schema, model)
                 elif provider == "ollama":
-                    text = self._call_ollama(prompt, json_schema)
+                    text = self._call_ollama(prompt, json_schema, model)
                 else:
                     raise ValueError(f"Unknown provider {provider!r}")
             except Exception as exc:  # noqa: BLE001 -- failover is the whole point
-                logger.warning("LLM provider %s failed: %s", provider, exc)
-                errors.append(f"{provider}: {exc}")
+                logger.warning("LLM provider %s failed: %s", entry, exc)
+                errors.append(f"{entry}: {exc}")
                 continue
 
             if use_cache:
@@ -249,6 +258,10 @@ class LLMProvider:
             return LLMResponse(text=text, provider=provider, model=model, from_cache=False)
 
         raise AllProvidersFailed("; ".join(errors) or "no providers configured")
+
+    def with_order(self, provider_order: tuple[str, ...]) -> "LLMProvider":
+        """A sibling provider with a different chain, sharing this one's cache."""
+        return LLMProvider(cache=self.cache, provider_order=provider_order)
 
     def generate_json(self, prompt: str, json_schema: dict, use_cache: bool = True) -> tuple[dict, LLMResponse]:
         """

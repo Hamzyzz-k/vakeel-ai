@@ -29,7 +29,7 @@ from app.legal.ipc_bns_mapping import EFFECTIVE_DATE
 from app.legal.query_bridge import augment_search_queries, find_ipc_references
 from app.legal.statute_catalog import INGESTIBLE_STATUTES, get_statute_by_title
 from app.legal.statute_reference import extract_concept_references, extract_statute_references
-from app.pipeline.citation import split_sentences, verify_answer, verify_irac
+from app.pipeline.citation import cited_claims, split_sentences, verify_answer, verify_irac
 from app.pipeline.citation_graph import build_citation_graph, detect_conflicts
 from app.pipeline.evidence_score import compute_evidence_score
 from app.pipeline.safety import (
@@ -38,13 +38,19 @@ from app.pipeline.safety import (
     assess_corpus_coverage,
     build_evidence_block,
     infer_supported_domain,
+    infer_supported_domains,
 )
 from app.pipeline.state import LegalQueryState, RetrievedSource
+from app.pipeline.support_judge import judge_support
 from app.retrieval.bm25 import bm25_search_chunks
 from app.retrieval.hybrid import reciprocal_rank_fusion
 from app.retrieval.rerank import lexical_rerank, rerank
 from app.retrieval.vectors import VectorIndex
 
+# One instance per process: its matrix (~15MB) loads once on first search
+# instead of being re-read from disk on every query. Rebuilding the index
+# (app/retrieval/build_product_index.py) therefore needs a restart.
+PRODUCT_VECTOR_INDEX = VectorIndex("product_all")
 INTAKE_PROMPT_TEMPLATE = """You are the intake stage of an Indian legal research assistant. \
 Given a user's question, extract structured facts. Respond with ONLY a JSON object, no markdown fences:
 
@@ -222,7 +228,15 @@ def run_intake(state: LegalQueryState, llm: LLMProvider) -> LegalQueryState:
 def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: int = 4) -> LegalQueryState:
     started = time.perf_counter()
     loaded_domains = {spec.domain for spec in INGESTIBLE_STATUTES}
-    domain = state.legal_domain if state.legal_domain in loaded_domains else None
+    # The intake model's domain is a hint, not ground truth: widen it with
+    # every domain the query itself clearly anchors to (see
+    # infer_supported_domains for the measured failure this prevents).
+    domains: list[str] = []
+    if state.legal_domain in loaded_domains:
+        domains.append(state.legal_domain)
+    for hinted in infer_supported_domains(state.user_query):
+        if hinted not in domains:
+            domains.append(hinted)
     direct_rows = []
     for reference in extract_statute_references(state.user_query):
         row = repo.find_statute_section(reference.act_name, reference.section_no)
@@ -273,11 +287,11 @@ def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: i
     cross_encoder_used = False
     if not direct_rows and not temporal_rows and not concept_rows:
         rankings = [
-            bm25_search_chunks(repo, q, corpus="product", limit_chunks=50, domain=domain)
+            bm25_search_chunks(repo, q, corpus="product", limit_chunks=50, domain=domains or None)
             for q in queries
         ]
 
-        vector_index = VectorIndex("product_all")
+        vector_index = PRODUCT_VECTOR_INDEX
         is_live_corpus = str(repo.db_path) == str(CORPUS_DB_PATH)
         if settings.enable_vector_retrieval and is_live_corpus and vector_index.exists():
             try:
@@ -292,8 +306,8 @@ def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: i
 
         fused_chunks = reciprocal_rank_fusion([ranking for ranking in rankings if ranking])
         rows = repo.get_chunks_with_sources(fused_chunks[:40])
-        if domain:
-            rows = [row for row in rows if row["domain"] == domain]
+        if domains:
+            rows = [row for row in rows if row["domain"] in domains]
         rows_by_chunk = {row["chunk_id"]: row for row in rows}
         candidates = [
             (chunk_id, rows_by_chunk[chunk_id]["chunk_text"])
@@ -340,7 +354,7 @@ def run_retrieval(state: LegalQueryState, repo: SQLiteCorpusRepository, top_k: i
         {
             "n_sources": len(sources),
             "n_search_queries": len(queries),
-            "domain_filter": domain,
+            "domain_filter": domains,
             "n_direct_references": len(direct_rows),
             "n_temporal_references": len(temporal_rows),
             "n_concept_references": len(concept_rows),
@@ -486,6 +500,27 @@ def run_reasoning_research(state: LegalQueryState, llm: LLMProvider, retry: bool
     return state
 
 
+_USE_NLI = settings.support_checker == "nli"
+
+
+def _support_verdicts(state: LegalQueryState, llm: LLMProvider, texts) -> dict[tuple[str, str], bool] | None:
+    """One batched LLM judge call over every cited claim in the answer (see
+    app/pipeline/support_judge.py for why). None means "use the lexical
+    gate": the judge is off, there's nothing to judge, the answer is the
+    verbatim extractive fallback, or the judge call failed."""
+    if settings.support_checker != "llm" or state.generation_mode != "llm":
+        return None
+    by_label = state.sources_by_label()
+    pairs = list(dict.fromkeys(pair for text in texts if text for pair in cited_claims(text, by_label)))
+    if not pairs:
+        return None
+    started = time.perf_counter()
+    judge_llm = llm.with_order(settings.support_judge_order) if isinstance(llm, LLMProvider) else llm
+    verdicts = judge_support(judge_llm, pairs)
+    state.record("support_judge", {"n_claims": len(pairs), "available": verdicts is not None}, started)
+    return dict(zip(pairs, verdicts)) if verdicts is not None else None
+
+
 def run_query(user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, mode: str = "advice") -> LegalQueryState:
     """The full pipeline, in one call. Returns the complete auditable state,
     not just the answer -- state.trace explains every step's outcome."""
@@ -508,7 +543,7 @@ def run_query(user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, m
     if mode == "research":
         run_reasoning_research(state, llm)
         if state.raw_answer:
-            verify_irac(state, use_nli=False)  # lexical gate; NLI arm requires a separate tuning pass
+            verify_irac(state, use_nli=_USE_NLI, judged=_support_verdicts(state, llm, state.irac_sections.values()))
 
         # A real, measured failure mode with the local model: it sometimes
         # writes substantive IRAC content but omits the [Sn] citation tag on
@@ -537,11 +572,11 @@ def run_query(user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, m
             state.irac_sections.clear()
             run_reasoning_research(state, llm, retry=True)
             if state.raw_answer:
-                verify_irac(state, use_nli=False)
+                verify_irac(state, use_nli=_USE_NLI, judged=_support_verdicts(state, llm, state.irac_sections.values()))
     else:
         run_reasoning(state, llm)
         if state.raw_answer:
-            verify_answer(state, use_nli=False)
+            verify_answer(state, use_nli=_USE_NLI, judged=_support_verdicts(state, llm, [state.raw_answer]))
 
     compute_evidence_score(state)
     apply_safety_checks(state)
