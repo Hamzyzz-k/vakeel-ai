@@ -28,6 +28,9 @@ RUN pip install --user --upgrade pip \
 # image rather than fetched on the first query.
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5')"
 
+# Bundled India Code PDFs: the corpus build reads these rather than
+# downloading from indiacode.gov.in, which now refuses the build's client.
+COPY --chown=vakeel:vakeel statutes ./statutes
 COPY --chown=vakeel:vakeel app ./app
 RUN python -m app.ingest.prepare_product_corpus \
     && python -m app.retrieval.build_product_index
