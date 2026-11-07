@@ -34,7 +34,8 @@ One-time setup (all free):
      EXPOSE_PROVIDER_ERRORS=false
      ```
    The image already sets `DEPLOY_MODE=CLOUD`, which also turns on daily
-   chat caps (25 per address, 100 in total per UTC day) and a 7-day expiry
+   chat caps (25 per address once `TRUSTED_PROXY_HOPS` is set, 100 in
+   total per UTC day) and a 7-day expiry
    on cached answers. Override them with `DAILY_CHAT_LIMIT_PER_CLIENT`,
    `DAILY_CHAT_BUDGET` and `LLM_CACHE_TTL_DAYS` if needed.
 3. Create a **fine-grained** Hugging Face access token (Settings > Access

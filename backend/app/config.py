@@ -108,9 +108,14 @@ class Settings:
     # Daily /chat caps per UTC day (0 = off). The free LLM tiers give
     # roughly 50 Groq answers a day plus 20 Gemini, so in CLOUD one address
     # gets 25 and everyone together 100 before a "limit reached" message.
+    # The per-client default needs TRUSTED_PROXY_HOPS: without it every
+    # user behind the platform proxy is one "client", and 25 questions
+    # would close the site for everyone.
     daily_chat_limit_per_client: int = field(
         default_factory=lambda: int(os.environ.get(
-            "DAILY_CHAT_LIMIT_PER_CLIENT", "25" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
+            "DAILY_CHAT_LIMIT_PER_CLIENT",
+            "25" if os.environ.get("DEPLOY_MODE") == "CLOUD" and int(os.environ.get("TRUSTED_PROXY_HOPS", "0")) > 0
+            else "0",
         ))
     )
     daily_chat_budget: int = field(

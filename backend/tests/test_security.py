@@ -168,6 +168,18 @@ def test_daily_quota_off_by_default_outside_cloud(monkeypatch):
     assert (local.daily_chat_limit_per_client, local.daily_chat_budget, local.llm_cache_ttl_days) == (0, 0, 0)
 
 
+def test_cloud_per_client_cap_needs_trusted_proxy_hops(monkeypatch):
+    monkeypatch.setenv("DEPLOY_MODE", "CLOUD")
+    monkeypatch.setenv("CORS_ORIGINS", "https://example.vercel.app")
+    monkeypatch.setenv("TRUSTED_HOSTS", "api.example.com")
+    for name in ("DAILY_CHAT_LIMIT_PER_CLIENT", "DAILY_CHAT_BUDGET", "TRUSTED_PROXY_HOPS"):
+        monkeypatch.delenv(name, raising=False)
+    # Behind an unconfigured proxy all users share one address.
+    assert (Settings().daily_chat_limit_per_client, Settings().daily_chat_budget) == (0, 100)
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
+    assert Settings().daily_chat_limit_per_client == 25
+
+
 def test_client_ip_uses_nth_entry_from_the_right():
     scope = {"client": ("10.0.0.1", 1234), "headers": [(b"x-forwarded-for", b"6.6.6.6, 203.0.113.9, 10.0.0.2")]}
     assert client_ip(scope, 0) == "10.0.0.1"
