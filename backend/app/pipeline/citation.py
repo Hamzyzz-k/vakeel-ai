@@ -61,6 +61,37 @@ must if then than so such very also into onto upon under over between
 
 _nli_cache: dict[str, object] = {}
 
+# Some models (seen with gpt-oss-120b) typeset with narrow/no-break spaces
+# and non-breaking hyphens -- "recover it [S4]", "Section 45". Fold
+# them to plain ASCII before splitting and matching so typography can't
+# decide whether a claim survives.
+_MODEL_TEXT_NORMALIZATION = str.maketrans({
+    " ": " ", " ": " ", " ": " ", " ": " ",
+    "‐": "-", "‑": "-",
+})
+
+
+def normalize_model_text(text: str) -> str:
+    return text.translate(_MODEL_TEXT_NORMALIZATION)
+
+
+def resolve_section_style_label(label: str, by_label: dict) -> str:
+    """Map "[S42]" to the supplied source that IS Section 42, when unambiguous.
+
+    Measured on live gpt-oss-120b output: every unknown label in a sample
+    was the section number of a supplied source written in label form
+    (sources S1-S3 were Sections 15, 13 and 42; it cited "[S42]"), even with
+    the allowed labels listed in the prompt. Remapping only to a source that
+    was supplied keeps fabrication impossible, and the claim still has to
+    pass the normal support check against that source's text. Anything
+    ambiguous or unmatched stays unknown and is rejected as before.
+    """
+    if label in by_label:
+        return label
+    number = label[1:]
+    matches = [key for key, source in by_label.items() if (getattr(source, "section_no", None) or "") == number]
+    return matches[0] if len(matches) == 1 else label
+
 
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p.strip()]
@@ -176,11 +207,31 @@ def verify_claim(claim: str, evidence: str, use_nli: bool = True) -> tuple[bool,
     return score >= _NLI_SUPPORT_THRESHOLD, score
 
 
+def claim_evidence(labels: list[str], by_label: dict) -> str:
+    # Section/case identifiers often live in source metadata rather than
+    # the body text. Include the exact title in support verification so a
+    # correct claim such as "Section 73 provides..." is not rejected only
+    # because the chunk starts after its heading.
+    return "\n".join(f"{by_label[lbl].title}\n{by_label[lbl].text}" for lbl in labels)
+
+
+def cited_claims(text: str, by_label: dict) -> list[tuple[str, str]]:
+    """(claim, evidence) for every sentence whose labels all exist -- the
+    claims whose support is actually in question, in verification order."""
+    claims = []
+    for sentence in split_sentences(normalize_model_text(text)):
+        labels = list(dict.fromkeys(resolve_section_style_label(lbl, by_label) for lbl in extract_labels(sentence)))
+        if labels and all(lbl in by_label for lbl in labels):
+            claims.append((strip_citations(sentence), claim_evidence(labels, by_label)))
+    return claims
+
+
 def verify_text(
     text: str,
     by_label: dict,
     use_nli: bool = True,
     allow_uncited: bool = False,
+    judged: dict[tuple[str, str], bool] | None = None,
 ) -> tuple[str, list[VerifiedClaim], list[VerifiedClaim]]:
     """
     The verification core, independent of LegalQueryState. Both Advice
@@ -189,14 +240,18 @@ def verify_text(
     this -- the guarantee (closed-set citation, existence + support checks)
     must be identical in both, not reimplemented per mode.
 
+    `judged` maps (claim, evidence) -> verdict from the LLM support judge
+    (app/pipeline/support_judge.py). When a claim has a verdict it replaces
+    the lexical/NLI decision; the number/negation veto still applies.
+
     Returns (kept_text, verified_claims, rejected_claims).
     """
     kept: list[str] = []
     verified: list[VerifiedClaim] = []
     rejected: list[VerifiedClaim] = []
 
-    for sentence in split_sentences(text):
-        labels = extract_labels(sentence)
+    for sentence in split_sentences(normalize_model_text(text)):
+        labels = list(dict.fromkeys(resolve_section_style_label(lbl, by_label) for lbl in extract_labels(sentence)))
         bare = strip_citations(sentence)
 
         # Uncited prose is not assumed to be harmless framing. A fabricated
@@ -224,12 +279,12 @@ def verify_text(
             )
             continue
 
-        # Section/case identifiers often live in source metadata rather than
-        # the body text. Include the exact title in support verification so a
-        # correct claim such as "Section 73 provides..." is not rejected only
-        # because the chunk starts after its heading.
-        evidence = "\n".join(f"{by_label[lbl].title}\n{by_label[lbl].text}" for lbl in labels)
-        supported, score = verify_claim(bare, evidence, use_nli=use_nli)
+        evidence = claim_evidence(labels, by_label)
+        if judged is not None and (bare, evidence) in judged:
+            score = lexical_overlap(bare, evidence)
+            supported = judged[(bare, evidence)] and not has_high_impact_contradiction(bare, evidence)
+        else:
+            supported, score = verify_claim(bare, evidence, use_nli=use_nli)
 
         claim = VerifiedClaim(
             sentence=bare, cited_labels=labels, exists=True,
@@ -261,7 +316,9 @@ IRAC_SECTION_HEADINGS = {
 }
 
 
-def verify_irac(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState:
+def verify_irac(
+    state: LegalQueryState, use_nli: bool = True, judged: dict[tuple[str, str], bool] | None = None,
+) -> LegalQueryState:
     """
     Research-mode counterpart to verify_answer. Verifies each IRAC section
     independently -- via the same verify_text() core Advice mode uses,
@@ -284,7 +341,7 @@ def verify_irac(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState
         # ISSUE may restate the user's question. All substantive IRAC fields
         # must pass the same citation gate as Advice mode.
         kept_text, verified, rejected = verify_text(
-            raw_section, by_label, use_nli=use_nli, allow_uncited=(key == "issue")
+            raw_section, by_label, use_nli=use_nli, allow_uncited=(key == "issue"), judged=judged,
         )
         state.verified_claims.extend(verified)
         state.rejected_claims.extend(rejected)
@@ -303,13 +360,16 @@ def verify_irac(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState
             "unsupported": sum(1 for c in state.rejected_claims if c.exists and not c.supported),
             "sections_rendered": len(rendered_sections),
             "used_nli": use_nli,
+            "used_support_judge": judged is not None,
         },
         started,
     )
     return state
 
 
-def verify_answer(state: LegalQueryState, use_nli: bool = True) -> LegalQueryState:
+def verify_answer(
+    state: LegalQueryState, use_nli: bool = True, judged: dict[tuple[str, str], bool] | None = None,
+) -> LegalQueryState:
     """
     Verifies every sentence of state.raw_answer, populating
     state.verified_claims / state.rejected_claims and rebuilding
@@ -320,7 +380,7 @@ def verify_answer(state: LegalQueryState, use_nli: bool = True) -> LegalQuerySta
     started = time.perf_counter()
     by_label = state.sources_by_label()
 
-    final_text, verified, rejected = verify_text(state.raw_answer, by_label, use_nli=use_nli)
+    final_text, verified, rejected = verify_text(state.raw_answer, by_label, use_nli=use_nli, judged=judged)
     state.verified_claims.extend(verified)
     state.rejected_claims.extend(rejected)
     state.final_answer = final_text
@@ -333,6 +393,7 @@ def verify_answer(state: LegalQueryState, use_nli: bool = True) -> LegalQuerySta
             "fabricated_labels": sum(1 for c in state.rejected_claims if not c.exists),
             "unsupported": sum(1 for c in state.rejected_claims if c.exists and not c.supported),
             "used_nli": use_nli,
+            "used_support_judge": judged is not None,
         },
         started,
     )

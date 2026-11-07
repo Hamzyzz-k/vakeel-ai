@@ -93,6 +93,38 @@ def test_chat_endpoint_returns_verified_cited_answer(tmp_path):
     assert first_source["url"] == "https://www.indiacode.nic.in/bitstream/123456789/2187/2/A187209.pdf"
 
 
+def test_concurrent_chats_do_not_queue_behind_each_other(tmp_path):
+    # A global lock used to serialize whole requests, LLM latency included,
+    # so N simultaneous users waited N x the generation time.
+    import threading
+    import time
+
+    class SlowLLM(StubLLM):
+        def generate(self, *args, **kwargs):
+            time.sleep(1.0)
+            return super().generate(*args, **kwargs)
+
+    client = _client(tmp_path)
+    chat_module._llm = SlowLLM()
+    statuses: list[int] = []
+
+    def ask():
+        statuses.append(client.post("/api/v1/chat", json={"message": "What compensation can I claim for breach?"}).status_code)
+
+    threads = [threading.Thread(target=ask) for _ in range(3)]
+    started = time.perf_counter()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    elapsed = time.perf_counter() - started
+
+    assert statuses == [200, 200, 200]
+    # Serialized, three 1s chats take >= 3s; parallel they take ~1s. The
+    # gap leaves room for a slow CI runner without masking serialization.
+    assert elapsed < 2.9, f"3 concurrent 1s chats took {elapsed:.2f}s -- requests are being serialized"
+
+
 def test_chat_endpoint_defaults_to_advice_mode(tmp_path):
     client = _client(tmp_path)
     resp = client.post("/api/v1/chat", json={"message": "test"})
@@ -153,6 +185,42 @@ def test_document_upload_analyzes_real_content(tmp_path):
     assert "Penalty" in data["missing_topics"]
 
 
+def test_document_upload_does_blocking_work_off_the_event_loop(tmp_path, monkeypatch):
+    # PDF parsing and SQLite analysis are blocking; on the event loop they
+    # would stall every other request, /health included, meanwhile.
+    import asyncio
+
+    import app.api.documents as documents_module
+
+    real_extract = documents_module.extract_document
+    real_analyze = documents_module.analyze_document
+    seen_loops = []
+
+    def _running_loop_or_none():
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
+    def extract(*args, **kwargs):
+        seen_loops.append(_running_loop_or_none())
+        return real_extract(*args, **kwargs)
+
+    def analyze(*args, **kwargs):
+        seen_loops.append(_running_loop_or_none())
+        return real_analyze(*args, **kwargs)
+
+    monkeypatch.setattr(documents_module, "extract_document", extract)
+    monkeypatch.setattr(documents_module, "analyze_document", analyze)
+    client = _client(tmp_path)
+    resp = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("lease.txt", b"1. Rent\nThe rent is Rs. 10,000 per month.\n", "text/plain")},
+    )
+    assert resp.status_code == 200
+    assert seen_loops == [None, None]
+
+
 def test_document_upload_extracts_and_splits_a_real_pdf(tmp_path):
     import pymupdf
 
@@ -208,6 +276,16 @@ def test_document_upload_rejects_file_disguised_as_pdf(tmp_path):
         files={"file": ("fake.pdf", b"this is not a PDF", "application/pdf")},
     )
     assert response.status_code == 400
+
+
+def test_document_upload_hides_parser_errors(tmp_path):
+    client = _client(tmp_path)
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("broken.pdf", b"%PDF-1.7 not really a pdf", "application/pdf")},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Could not read this file. It may be corrupted or password-protected."
 
 
 def test_document_upload_rejects_binary_content_disguised_as_text(tmp_path):

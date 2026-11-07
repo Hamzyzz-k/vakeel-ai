@@ -84,7 +84,7 @@ def bm25_search_chunks(
     query_text: str,
     corpus: str,
     limit_chunks: int = 50,
-    domain: str | None = None,
+    domain: str | list[str] | None = None,
 ) -> list[str]:
     """Return matched chunk ids directly instead of collapsing to sources."""
     fts_query = sanitize_fts5_query(query_text)

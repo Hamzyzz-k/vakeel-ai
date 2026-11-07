@@ -10,7 +10,8 @@ import {
   ShieldCheck,
   Sparkle,
 } from "@phosphor-icons/react";
-import { motion, useScroll, useTransform } from "motion/react";
+import { motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
+import { useState } from "react";
 import BrandMark from "./BrandMark.jsx";
 import SuitReveal from "./SuitReveal.jsx";
 
@@ -55,13 +56,21 @@ const reveal = {
 
 export default function LandingPage({ onEnter }) {
   const { scrollY } = useScroll();
+  const [headerInteractive, setHeaderInteractive] = useState(false);
   const headerBackground = useTransform(scrollY, [0, 560, 680], ["rgba(12,12,12,0)", "rgba(12,12,12,0)", "rgba(255,255,255,0.92)"]);
   const headerColor = useTransform(scrollY, [0, 560, 680], ["#fafafa", "#fafafa", "#121212"]);
   const headerBorder = useTransform(scrollY, [0, 560, 680], ["rgba(18,18,18,0)", "rgba(18,18,18,0)", "rgba(18,18,18,0.1)"]);
+  const headerOpacity = useTransform(scrollY, [0, 570, 680], [0, 0, 1]);
+  const headerY = useTransform(scrollY, [0, 570, 680], [-12, -12, 0]);
+
+  useMotionValueEvent(scrollY, "change", (position) => {
+    const nextInteractive = position >= 640;
+    setHeaderInteractive((current) => current === nextInteractive ? current : nextInteractive);
+  });
 
   return (
     <div className="landing-page min-h-[100dvh] overflow-x-clip bg-[var(--canvas)] text-[var(--ink)]">
-      <motion.header style={{ backgroundColor: headerBackground, color: headerColor, borderColor: headerBorder }} className="fixed inset-x-0 top-0 z-50 flex items-center justify-between border-b px-[clamp(20px,3vw,54px)] py-3.5 backdrop-blur-md">
+      <motion.header style={{ backgroundColor: headerBackground, color: headerColor, borderColor: headerBorder, opacity: headerOpacity, y: headerY }} className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between border-b px-[clamp(20px,3vw,54px)] py-3.5 backdrop-blur-md ${headerInteractive ? "pointer-events-auto" : "pointer-events-none"}`}>
         <a href="#top" aria-label="VakeelAI home"><BrandMark compact /></a>
         <nav className="hidden items-center gap-[clamp(18px,2.3vw,34px)] font-mono text-[10px] md:flex">
           {["Method", "Coverage", "Modes", "Safety"].map((item) => <a key={item} href={`#${item.toLowerCase()}`} className="border-b border-transparent py-1 opacity-80 transition-all hover:border-current hover:opacity-100">{item}</a>)}

@@ -1,8 +1,13 @@
 """Small, human-labelled product retrieval suite.
 
-These cases exercise the live four-Act corpus. They are intentionally
+These cases exercise the live product corpus. They are intentionally
 separate from the AILA benchmark so product changes are not scored against
 an unrelated judgment corpus.
+
+Most cases hand retrieval the correct domain, which skips the intake model
+entirely -- so they could never catch the intake model picking a plausible
+but wrong domain. Cases with `intake_domain` set feed retrieval that wrong
+domain instead, the way a real query reaches it.
 
 Run: python -m app.eval.product_quality
 """
@@ -23,6 +28,9 @@ class ProductRetrievalCase:
     query: str
     domain: str
     expected_source_ids: tuple[str, ...]
+    # The (wrong) domain an intake model plausibly assigns; None means the
+    # case is given its correct `domain`.
+    intake_domain: str | None = None
 
 
 CASES = (
@@ -272,6 +280,35 @@ CASES = (
         "land",
         ("indiacode:karnataka_land_revenue_act_1964:s67",),
     ),
+    # -- the intake model chose a plausible but wrong domain ---------------
+    ProductRetrievalCase(
+        "cheque_bounce_classified_criminal",
+        "My cheque given to a supplier bounced for insufficient funds. Can they file a criminal case and within what time?",
+        "commercial",
+        ("indiacode:negotiable_instruments_act_1881:s138",),
+        intake_domain="criminal",
+    ),
+    ProductRetrievalCase(
+        "delayed_flat_possession_classified_consumer",
+        "The builder has not handed over possession of my flat for two years. Can I get my money back with interest?",
+        "real_estate",
+        ("indiacode:real_estate_act_2016:s18",),
+        intake_domain="consumer",
+    ),
+    ProductRetrievalCase(
+        "arbitral_award_challenge_classified_contract",
+        "Can I go to court to set aside an arbitral award, and on what grounds?",
+        "dispute_resolution",
+        ("indiacode:arbitration_act_1996:s34",),
+        intake_domain="contract",
+    ),
+    ProductRetrievalCase(
+        "arrest_without_warrant_classified_criminal",
+        "Can the police arrest me without a warrant, and when are they allowed to?",
+        "criminal_procedure",
+        ("indiacode:bnss_2023:s35",),
+        intake_domain="criminal",
+    ),
 )
 
 
@@ -280,7 +317,7 @@ def evaluate(repo: SQLiteCorpusRepository, top_k: int = 4) -> dict:
     for case in CASES:
         state = LegalQueryState(
             user_query=case.query,
-            legal_domain=case.domain,
+            legal_domain=case.intake_domain or case.domain,
             search_queries=[case.query],
         )
         run_retrieval(state, repo, top_k=top_k)

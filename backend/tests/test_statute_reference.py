@@ -164,3 +164,23 @@ def test_routes_helmet_question_to_duty_and_penalty():
         ("The Motor Vehicles Act, 1988", "129"),
         ("The Motor Vehicles Act, 1988", "194D"),
     ]
+
+
+def test_routes_bounced_cheque_to_negotiable_instruments_138_and_142():
+    refs = extract_concept_references(
+        "My cheque given to a supplier bounced for insufficient funds. Can they file a criminal case?"
+    )
+    assert [(ref.act_name, ref.section_no) for ref in refs] == [
+        ("The Negotiable Instruments Act, 1881", "138"),
+        ("The Negotiable Instruments Act, 1881", "142"),
+    ]
+
+
+def test_routes_dishonoured_cheque_phrasing_too():
+    refs = extract_concept_references("The bank dishonoured the cheque my tenant gave me.")
+    assert ("The Negotiable Instruments Act, 1881", "138") in [(r.act_name, r.section_no) for r in refs]
+
+
+def test_does_not_route_ordinary_uses_of_check_or_cheque():
+    assert extract_concept_references("Can you check whether my rent agreement is valid?") == []
+    assert extract_concept_references("I paid the deposit by cheque and want a receipt.") == []

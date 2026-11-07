@@ -191,3 +191,65 @@ def test_trace_records_verification_counts():
     assert event.detail["verified"] == 1
     assert event.detail["rejected"] == 1
     assert event.detail["fabricated_labels"] == 1
+
+
+def test_model_typography_does_not_decide_whether_a_claim_survives():
+    # gpt-oss-120b writes narrow no-break spaces before labels and inside
+    # "Section 73"; the claim must verify exactly as its ASCII twin does.
+    from app.pipeline.citation import verify_text
+    from app.pipeline.state import RetrievedSource
+
+    source = RetrievedSource(
+        label="S1", source_id="x", title="Indian Contract Act - Section 73",
+        text="The party who breaks a contract must compensate the other party for loss caused by the breach.",
+        source_type="SECTION",
+    )
+    plain = "Under Section 73 the party who breaks a contract must compensate for loss caused by the breach [S1]."
+    fancy = plain.replace("Section 73", "Section 73").replace(" [S1]", " [S1]").replace("breaks", "breaks ")
+    kept_plain, verified_plain, _ = verify_text(plain, {"S1": source}, use_nli=False)
+    kept_fancy, verified_fancy, _ = verify_text(fancy, {"S1": source}, use_nli=False)
+    assert len(verified_plain) == len(verified_fancy) == 1
+    assert " " not in kept_fancy and " " not in kept_fancy
+
+
+def _section_sources():
+    from app.pipeline.state import RetrievedSource
+
+    return {
+        "S1": RetrievedSource(label="S1", source_id="a", title="Sale of Goods Act - Section 15",
+                              text="Where there is a contract for the sale of goods by description, there is an implied condition that the goods shall correspond with the description.",
+                              source_type="SECTION", section_no="15"),
+        "S2": RetrievedSource(label="S2", source_id="b", title="Sale of Goods Act - Section 42",
+                              text="The buyer is deemed to have accepted the goods when he intimates to the seller that he has accepted them.",
+                              source_type="SECTION", section_no="42"),
+    }
+
+
+def test_section_number_written_as_label_maps_to_that_supplied_source():
+    from app.pipeline.citation import verify_text
+
+    text = "The buyer is deemed to have accepted the goods when he intimates acceptance to the seller [S42]."
+    kept, verified, rejected = verify_text(text, _section_sources(), use_nli=False)
+    assert rejected == []
+    assert verified[0].cited_labels == ["S2"]
+    assert kept.endswith("[S2].")
+
+
+def test_unmatched_section_style_label_is_still_rejected_as_unknown():
+    from app.pipeline.citation import verify_text
+
+    text = "The buyer may reject the goods within thirty days [S99]."
+    _, verified, rejected = verify_text(text, _section_sources(), use_nli=False)
+    assert verified == []
+    assert rejected[0].exists is False
+    assert "S99" in rejected[0].rejection_reason
+
+
+def test_remapped_label_still_needs_support():
+    from app.pipeline.citation import verify_text
+
+    text = "The seller must refund the full price within seven days of any complaint [S42]."
+    _, verified, rejected = verify_text(text, _section_sources(), use_nli=False)
+    assert verified == []
+    assert rejected[0].exists is True
+    assert rejected[0].supported is False

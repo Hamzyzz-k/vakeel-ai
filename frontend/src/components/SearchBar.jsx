@@ -113,6 +113,8 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
 
         <p className="text-center text-[10px] text-[var(--ink-muted)]/65 mt-2 leading-relaxed">
           Vakeel AI provides general legal information, not legal advice. Consult a licensed attorney for your situation.
+          <br />
+          Questions are processed by third-party AI services. Leave out names, phone numbers and ID numbers.
         </p>
       </div>
     </div>

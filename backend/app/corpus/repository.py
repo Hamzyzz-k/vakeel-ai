@@ -7,8 +7,9 @@ file here, not a rewrite of the pipeline.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from app.corpus.schema import get_connection, init_db
 
@@ -82,14 +83,34 @@ class SQLiteCorpusRepository:
         self.db_path = db_path
         if ensure_schema:
             init_db(db_path)
-        self._connection = get_connection(db_path)
+        # One long-lived connection *per thread*, not per call (see the
+        # class docstring) and not one shared across threads. FastAPI runs
+        # sync handlers on a threadpool; a single shared connection forced
+        # every request -- LLM latency included -- through one global lock.
+        # Each thread reusing its own connection keeps the
+        # `conn = repo._conn(); conn.execute(...); conn.execute(...)` call
+        # sites correct without any lock, and WAL lets readers run in
+        # parallel.
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
         self._source_cache: dict[str, sqlite3.Row | None] = {}
 
     def _conn(self) -> sqlite3.Connection:
-        return self._connection
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = get_connection(self.db_path)
+            self._local.connection = connection
+            with self._connections_lock:
+                self._connections.append(connection)
+        return connection
 
     def close(self) -> None:
-        self._connection.close()
+        with self._connections_lock:
+            for connection in self._connections:
+                connection.close()
+            self._connections.clear()
+        self._local = threading.local()
 
     def __enter__(self) -> "SQLiteCorpusRepository":
         return self
@@ -292,10 +313,11 @@ class SQLiteCorpusRepository:
 
     def bm25_search(
         self, query: str, corpus: str | None = None, source_type: str | None = None,
-        limit: int = 20, roles: list[str] | None = None, domain: str | None = None,
+        limit: int = 20, roles: list[str] | None = None, domain: str | Sequence[str] | None = None,
     ) -> list[sqlite3.Row]:
         """FTS5 BM25 search over chunks, optionally scoped to a corpus,
-        source_type, and/or a set of rhetorical_role values (Phase 4 / RQ5)."""
+        source_type, one or more domains, and/or a set of rhetorical_role
+        values (Phase 4 / RQ5)."""
         sql = """
             SELECT lc.id, lc.source_id, lc.chunk_text, ls.corpus,
                    bm25(legal_chunks_fts) AS bm25_score
@@ -312,8 +334,9 @@ class SQLiteCorpusRepository:
             sql += " AND ls.source_type = ?"
             params.append(source_type)
         if domain:
-            sql += " AND ls.domain = ?"
-            params.append(domain)
+            domains = [domain] if isinstance(domain, str) else list(domain)
+            sql += f" AND ls.domain IN ({','.join('?' for _ in domains)})"
+            params.extend(domains)
         if roles:
             sql += f" AND lc.rhetorical_role IN ({','.join('?' for _ in roles)})"
             params.extend(roles)

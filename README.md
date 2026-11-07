@@ -9,7 +9,7 @@ reaches the user, so a fabricated case or section is structurally impossible
 rather than merely detected after the fact.
 
 Uses SQLite locally and supports a free-provider chain for generation:
-Gemini, then Groq, then local Ollama. If every model provider is unavailable,
+Groq, then Gemini, then local Ollama. If every model provider is unavailable,
 the deterministic source-only fallback still returns verified statute text.
 
 If neither provider is configured, the app remains usable in a clearly
@@ -139,12 +139,12 @@ auditable through a single state object that every step appends to.
 ## Tech stack
 
 **Backend:** Python, FastAPI, SQLite (FTS5 for BM25), sentence-transformers
-(bge-small embeddings, bge cross-encoder reranking), scikit-learn, networkx,
+(bge-small embeddings, optional bge cross-encoder reranking), scikit-learn, networkx,
 PyMuPDF, pytest
 
 **Frontend:** React, Vite, Tailwind CSS
 
-**LLM:** Gemini → Groq (`openai/gpt-oss-120b`) → local Ollama → source-only fallback
+**LLM:** Groq (`openai/gpt-oss-120b`) → Gemini → local Ollama → source-only fallback
 
 ## Running it
 
@@ -163,7 +163,8 @@ npm run dev
 ```
 
 Copy `.env.example` to `.env`. Add `GEMINI_API_KEY` and/or `GROQ_API_KEY`; the
-default order is `gemini,groq,ollama`, configurable through
+default order is `groq,gemini,ollama` (Groq answered in ~5s where Gemini took
+~30s on the same queries), configurable through
 `LLM_PROVIDER_ORDER`. Then open `http://localhost:5173`.
 
 Production environment variables, separate frontend/backend deployment steps,

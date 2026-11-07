@@ -1,0 +1,26 @@
+name: Keep backend awake
+
+# Free Hugging Face Spaces sleep after 48 hours without traffic, and the
+# first request after that waits for a full restart. One ping a day keeps
+# the Space awake. Set the repository variable BACKEND_HEALTH_URL (e.g.
+# https://your-username-vakeel-ai.hf.space/api/v1/health) to enable it.
+# GitHub pauses scheduled workflows after 60 days without repository
+# activity; re-enable it from the Actions tab if that happens.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+# Read-only token: no step needs to write to this repository.
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    if: ${{ vars.BACKEND_HEALTH_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        env:
+          URL: ${{ vars.BACKEND_HEALTH_URL }}
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 30 --max-time 120 "$URL"

@@ -13,16 +13,19 @@ used in app/pipeline/graph.py's REASONING_PROMPT_TEMPLATE.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-from app.api.chat import _db_lock, _get_repo
+from app.api.chat import _get_repo
 from app.documents.analyzer import analyze_document
 from app.documents.extractor import extract_document
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB -- generous for a contract/notice, not for a mistake
 _MAX_TEXT_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -73,16 +76,27 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentAnalysisOut:
         if b"\x00" in file_bytes[:4096]:
             raise HTTPException(status_code=400, detail="Binary content is not accepted as a text document")
 
+    # This handler is async (the upload is read with await), so anything
+    # blocking must leave the event loop. PDF parsing is CPU-bound and
+    # analysis runs SQLite queries; run inline, either one stalls every
+    # other request, /health included, until it finishes.
     try:
-        doc = extract_document(file_bytes, filename)
+        doc = await run_in_threadpool(extract_document, file_bytes, filename)
     except Exception as exc:  # noqa: BLE001 -- a corrupt/unreadable upload is a client error, not a crash
-        raise HTTPException(status_code=422, detail=f"Could not extract text from this file: {exc}") from exc
+        # The parser's own message names library internals; keep it in the
+        # server log and give the client a plain reason.
+        logger.warning("Could not extract text from an upload: %s: %s", type(exc).__name__, exc)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read this file. It may be corrupted or password-protected.",
+        ) from exc
 
     if not doc.full_text.strip():
         raise HTTPException(status_code=422, detail="No extractable text found -- this may be a scanned image PDF (OCR is not supported in this phase)")
 
-    with _db_lock:  # see app/api/chat.py's _db_lock docstring
-        analysis = analyze_document(doc, _get_repo())
+    # _get_repo() may build the repository (schema init) on first use, so it
+    # runs inside the worker thread too.
+    analysis = await run_in_threadpool(lambda: analyze_document(doc, _get_repo()))
 
     return DocumentAnalysisOut(
         filename=filename,

@@ -19,8 +19,11 @@ class StubLLM:
     twice per research-mode run (intake, then IRAC reasoning) -- distinguish
     them by call order, since run_intake always runs first in the pipeline."""
 
-    def __init__(self, intake_json: dict, answer_text: str = "", irac_json: dict | None = None, irac_json_sequence: list[dict] | None = None):
+    def __init__(self, intake_json: dict, answer_text: str = "", irac_json: dict | None = None, irac_json_sequence: list[dict] | None = None, judge_labels: list[str] | None = None):
         self.intake_json = intake_json
+        # None makes the support-judge call return nothing usable, so the
+        # pipeline falls back to the lexical gate (the pre-judge behaviour).
+        self.judge_labels = judge_labels
         self.answer_text = answer_text
         # irac_json_sequence lets a test simulate the retry path: first call
         # returns one response, the retry call (if triggered) returns the
@@ -34,6 +37,10 @@ class StubLLM:
 
     def generate_json(self, prompt: str, json_schema: dict, use_cache: bool = True):
         self.prompts.append(prompt)
+        if "labels" in json_schema.get("properties", {}):
+            self.calls.append("judge")
+            data = {"labels": self.judge_labels} if self.judge_labels is not None else {}
+            return data, LLMResponse(text=json.dumps(data), provider="stub", model="stub", from_cache=False)
         if "issue" in json_schema.get("properties", {}):
             self.calls.append("irac")
             if self.irac_json_sequence is not None:
@@ -428,9 +435,79 @@ def test_advice_and_research_use_distinct_products_for_the_same_scenario(tmp_pat
     advice = run_query("A supplier breached our contract. What can I do?", repo, advice_llm, mode="advice")
     research = run_query("A supplier breached our contract. What can I do?", repo, research_llm, mode="research")
 
-    assert "practical Advice mode" in advice_llm.prompts[-1]
-    assert "IRAC research note" in research_llm.prompts[-1]
+    assert any("practical Advice mode" in prompt for prompt in advice_llm.prompts)
+    assert any("IRAC research note" in prompt for prompt in research_llm.prompts)
     assert "ISSUE" not in advice.final_answer
     assert "RULE" in research.final_answer
     assert "AUTHORITIES" in research.final_answer
     assert advice.final_answer != research.final_answer
+
+
+def test_retrieval_widens_a_wrong_intake_domain_with_query_anchors(tmp_path):
+    # The intake model labelled an arbitration question "contract"; a hard
+    # filter on that one domain used to hide the Arbitration Act entirely.
+    repo = make_repo(tmp_path)
+    text = "Recourse to a Court against an arbitral award may be made only by an application for setting aside such award."
+    repo.upsert_source(LegalSource(
+        id="test:arbitration:34", corpus="product", source_type="SECTION",
+        title="Arbitration and Conciliation Act - Section 34", full_text=text,
+        domain="dispute_resolution", authority_level=2,
+        act_name="The Arbitration and Conciliation Act, 1996", section_no="34",
+    ))
+    repo.upsert_chunks([LegalChunk(id="test:arbitration:34:p0", source_id="test:arbitration:34", chunk_text=text)])
+
+    state = LegalQueryState(
+        user_query="Can I ask a court to set aside an arbitral award?",
+        legal_domain="contract",
+        search_queries=["set aside arbitral award"],
+    )
+    run_retrieval(state, repo)
+
+    assert "test:arbitration:34" in [s.source_id for s in state.retrieved_sources]
+
+
+def _contract_intake() -> dict:
+    return {"jurisdiction_country": "India", "jurisdiction_state": None, "legal_domain": "contract",
+            "issues": ["breach"], "search_queries": ["contract breach compensation loss"]}
+
+
+def test_support_judge_verdict_overrides_lexical_gate(tmp_path):
+    # Lexically this sentence clears the gate easily; the judge says the
+    # source doesn't support it, and the judge decides.
+    repo = make_repo(tmp_path)
+    llm = StubLLM(
+        intake_json=_contract_intake(),
+        answer_text="The party who breaks a contract must compensate the other party for loss caused by the breach [S1].",
+        judge_labels=["NOT_SUPPORTED"],
+    )
+    state = run_query("A supplier broke our contract. What compensation applies?", repo, llm, mode="advice")
+
+    assert "judge" in llm.calls
+    assert state.verified_claims == []
+    assert state.rejected_claims[0].exists is True
+    assert any(event.step == "support_judge" and event.detail["available"] for event in state.trace)
+
+
+def test_support_judge_cannot_override_the_number_veto(tmp_path):
+    repo = make_repo(tmp_path)
+    llm = StubLLM(
+        intake_json=_contract_intake(),
+        answer_text="The party who breaks a contract must compensate within 30 days for loss caused by the breach [S1].",
+        judge_labels=["SUPPORTED"],
+    )
+    state = run_query("A supplier broke our contract. What compensation applies?", repo, llm, mode="advice")
+
+    assert state.verified_claims == []
+
+
+def test_unusable_judge_reply_falls_back_to_lexical_gate(tmp_path):
+    repo = make_repo(tmp_path)
+    llm = StubLLM(
+        intake_json=_contract_intake(),
+        answer_text="The party who breaks a contract must compensate the other party for loss caused by the breach [S1].",
+        judge_labels=["SUPPORTED", "SUPPORTED"],  # wrong length: can't be aligned
+    )
+    state = run_query("A supplier broke our contract. What compensation applies?", repo, llm, mode="advice")
+
+    assert len(state.verified_claims) == 1
+    assert any(event.step == "support_judge" and not event.detail["available"] for event in state.trace)

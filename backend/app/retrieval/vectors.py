@@ -12,6 +12,7 @@ plus an id-order list, rather than stored per-chunk in legal_chunks.embedding
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -20,21 +21,25 @@ from app.config import DATA_DIR, settings
 from app.corpus.repository import SQLiteCorpusRepository
 
 _model_cache: dict[str, object] = {}
+_model_lock = threading.Lock()
 
 
 def _get_embedder():
     """Lazy import + lazy load -- keeps this module importable even before
     torch/sentence-transformers are installed (e.g. during Phase 0/1 BM25
     work), and keeps VRAM free until something actually needs the model."""
-    if "embedder" not in _model_cache:
-        from sentence_transformers import SentenceTransformer
+    # The API warms this in a background thread at startup; a query arriving
+    # meanwhile must wait for that load rather than start a second ~13s one.
+    with _model_lock:
+        if "embedder" not in _model_cache:
+            from sentence_transformers import SentenceTransformer
 
-        device = "cuda" if settings.use_gpu else "cpu"
-        _model_cache["embedder"] = SentenceTransformer(
-            settings.embedding_model,
-            device=device,
-            local_files_only=True,
-        )
+            device = "cuda" if settings.use_gpu else "cpu"
+            _model_cache["embedder"] = SentenceTransformer(
+                settings.embedding_model,
+                device=device,
+                local_files_only=True,
+            )
     return _model_cache["embedder"]
 
 

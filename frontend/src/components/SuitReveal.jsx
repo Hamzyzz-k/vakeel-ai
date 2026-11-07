@@ -2,8 +2,8 @@ import { memo, useRef, useState } from "react";
 import { ArrowDown, ArrowRight, CaretRight, Check } from "@phosphor-icons/react";
 import { useMotionValueEvent, useReducedMotion, useScroll } from "motion/react";
 
-const CLOSED_SUIT_IMAGE = "/vakeelai-buttoned-suit_e7e96014.png";
-const OPEN_SUIT_IMAGE = "/vakeelai-opened-suit-scene_1a766212.png";
+const CLOSED_SUIT_IMAGE = "/vakeelai-buttoned-black-suit.png";
+const OPEN_SUIT_IMAGE = "/vakeelai-opened-black-suit-scene.png";
 const clamp = (value) => Math.min(1, Math.max(0, value));
 
 const ScrollCue = memo(function ScrollCue({ opacity }) {

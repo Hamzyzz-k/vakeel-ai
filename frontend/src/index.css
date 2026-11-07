@@ -165,6 +165,17 @@ textarea {
   object-fit: contain;
   opacity: var(--zip-suit-opacity);
   filter: drop-shadow(0 28px 34px rgba(0, 0, 0, 0.36));
+  /* The black-tie render is masked by the original transparent silhouette.
+     This removes the generator's checkerboard outside the jacket without
+     losing the crisp sleeve and lapel edges. */
+  -webkit-mask-image: url("/vakeelai-buttoned-suit_e7e96014.png");
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-image: url("/vakeelai-buttoned-suit_e7e96014.png");
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
   transform: translate3d(0, calc(var(--zip-jacket-open) * -2%), 12px) scale(var(--zip-suit-scale));
   transform-origin: 50% 45%;
   transition: opacity 40ms linear;

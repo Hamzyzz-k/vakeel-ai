@@ -9,6 +9,10 @@ services:
     envVars:
       - key: DEPLOY_MODE
         value: CLOUD
+      # Render's free 512MB instance cannot hold torch plus the embedder;
+      # the primary host is the Hugging Face Space (see HOSTING.md).
+      - key: ENABLE_VECTOR_RETRIEVAL
+        value: "false"
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -16,4 +20,6 @@ services:
       - key: CORS_ORIGINS
         sync: false
       - key: TRUSTED_HOSTS
+        sync: false
+      - key: TRUSTED_PROXY_HOPS
         sync: false

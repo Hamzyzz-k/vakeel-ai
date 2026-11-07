@@ -7,10 +7,22 @@ import SearchBar from "./components/SearchBar.jsx";
 import ChatArea from "./components/ChatArea.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import { useIsMobile } from "./hooks/useIsMobile.js";
-import { apiUrl } from "./lib/api.js";
+import { fetchWithTimeout, RequestTimeoutError } from "./lib/api.js";
 
 const STORAGE_KEY = "vakeel_conversations_v1";
 const MODE_TO_API = { Advice: "advice", Research: "research" };
+// Long enough for the backend's provider fallbacks (Groq, then Gemini) to
+// finish; anything past this is a stalled request, not a slow answer.
+const CHAT_TIMEOUT_MS = 120000;
+const UPLOAD_TIMEOUT_MS = 90000;
+const WAKING_AFTER_MS = 3000;
+
+function failureText(err, action) {
+  if (err instanceof RequestTimeoutError) {
+    return `${action} timed out (${err.message.toLowerCase()}). The server may still be waking up. Try again.`;
+  }
+  return `${action} failed: ${err.message}`;
+}
 
 function loadConversations() {
   try {
@@ -57,12 +69,36 @@ function Workspace({ onHome, initialMode = "Advice" }) {
   // device width. window.innerWidth is available synchronously at this
   // point, so read it directly for the one-time initial value instead.
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
+  const [serverWaking, setServerWaking] = useState(false);
+  const [serverUnreachable, setServerUnreachable] = useState(false);
 
   const textareaRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
   }, [conversations]);
+
+  // The free backend host sleeps when idle. Ping it as soon as the
+  // workspace opens so the wake-up overlaps with the user typing, and say
+  // so if it is slow instead of leaving a silent spinner.
+  useEffect(() => {
+    let active = true;
+    const slow = setTimeout(() => active && setServerWaking(true), WAKING_AFTER_MS);
+    fetchWithTimeout("/api/v1/health", {}, CHAT_TIMEOUT_MS)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+        if (active) setServerUnreachable(false);
+      })
+      .catch(() => active && setServerUnreachable(true))
+      .finally(() => {
+        clearTimeout(slow);
+        if (active) setServerWaking(false);
+      });
+    return () => {
+      active = false;
+      clearTimeout(slow);
+    };
+  }, []);
 
   const activeConversation = conversations.find((c) => c.id === activeId) || null;
   const messages = activeConversation?.messages ?? [];
@@ -122,12 +158,16 @@ function Workspace({ onHome, initialMode = "Advice" }) {
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     try {
-      const res = await fetch(apiUrl("/api/v1/chat"), {
+      const res = await fetchWithTimeout("/api/v1/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, mode: MODE_TO_API[mode] }),
-      });
-      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      }, CHAT_TIMEOUT_MS);
+      if (!res.ok) {
+        // Limit messages (429) carry a readable detail; show it, not the code.
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Server responded ${res.status}`);
+      }
       const data = await res.json();
 
       const aiMsg = {
@@ -152,7 +192,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
       const errMsg = {
         id: (Date.now() + 1).toString(),
         role: "ai",
-        error: `Could not reach the backend: ${err.message}`,
+        error: failureText(err, "The request"),
         retryQuestion: question,
       };
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, errMsg] }));
@@ -195,7 +235,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(apiUrl("/api/v1/documents/upload"), { method: "POST", body: formData });
+      const res = await fetchWithTimeout("/api/v1/documents/upload", { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server responded ${res.status}`);
@@ -204,7 +244,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
       const aiMsg = { id: (Date.now() + 1).toString(), role: "ai", isDocumentAnalysis: true, analysis };
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, aiMsg] }));
     } catch (err) {
-      const errMsg = { id: (Date.now() + 1).toString(), role: "ai", error: `Could not analyze document: ${err.message}` };
+      const errMsg = { id: (Date.now() + 1).toString(), role: "ai", error: failureText(err, "Document analysis") };
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, errMsg] }));
     } finally {
       setIsTyping(false);
@@ -259,10 +299,22 @@ function Workspace({ onHome, initialMode = "Advice" }) {
           </div>
         </header>
 
+        {serverWaking && (
+          <div role="status" className="flex-shrink-0 border-b border-[var(--line)] bg-[var(--paper)] px-4 py-2 text-center text-[11px] text-[var(--ink-muted)] sm:px-8">
+            Waking the server. The free host sleeps when idle, so the first answer can take up to a minute.
+          </div>
+        )}
+        {serverUnreachable && !serverWaking && (
+          <div role="status" className="flex-shrink-0 border-b border-[var(--line)] bg-[var(--paper)] px-4 py-2 text-center text-[11px] text-[var(--ink-muted)] sm:px-8">
+            The server isn't responding right now. Questions will fail until it's back.
+          </div>
+        )}
+
         <ChatArea
           activeId={activeId}
           messages={messages}
           isTyping={isTyping}
+          serverWaking={serverWaking}
           mode={mode}
           onQuickPrompt={onQuickPrompt}
           onRetry={retry}
