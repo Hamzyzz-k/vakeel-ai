@@ -11,6 +11,10 @@ on:
     - cron: "17 6 * * *"
   workflow_dispatch:
 
+# Read-only token: no step needs to write to this repository.
+permissions:
+  contents: read
+
 jobs:
   ping:
     if: ${{ vars.BACKEND_HEALTH_URL != '' }}

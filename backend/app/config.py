@@ -105,6 +105,26 @@ class Settings:
     # proxy it must match that platform's hop count, or every user shares
     # the proxy's address and therefore one bucket (see security.client_ip).
     trusted_proxy_hops: int = field(default_factory=lambda: int(os.environ.get("TRUSTED_PROXY_HOPS", "0")))
+    # Daily /chat caps per UTC day (0 = off). The free LLM tiers give
+    # roughly 50 Groq answers a day plus 20 Gemini, so in CLOUD one address
+    # gets 25 and everyone together 100 before a "limit reached" message.
+    daily_chat_limit_per_client: int = field(
+        default_factory=lambda: int(os.environ.get(
+            "DAILY_CHAT_LIMIT_PER_CLIENT", "25" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
+        ))
+    )
+    daily_chat_budget: int = field(
+        default_factory=lambda: int(os.environ.get(
+            "DAILY_CHAT_BUDGET", "100" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
+        ))
+    )
+    # Cached LLM responses embed users' questions, so in CLOUD they expire
+    # after a week. 0 keeps them forever, which local evaluation relies on.
+    llm_cache_ttl_days: int = field(
+        default_factory=lambda: int(os.environ.get(
+            "LLM_CACHE_TTL_DAYS", "7" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
+        ))
+    )
     expose_provider_errors: bool = field(
         default_factory=lambda: _env_bool("EXPOSE_PROVIDER_ERRORS", os.environ.get("DEPLOY_MODE", "LOCAL") == "LOCAL")
     )
@@ -160,6 +180,8 @@ class Settings:
             raise ValueError("SUPPORT_CHECKER must be llm, lexical or nli")
         if self.trusted_proxy_hops < 0:
             raise ValueError("TRUSTED_PROXY_HOPS must be 0 or a positive integer")
+        if min(self.daily_chat_limit_per_client, self.daily_chat_budget, self.llm_cache_ttl_days) < 0:
+            raise ValueError("DAILY_CHAT_LIMIT_PER_CLIENT, DAILY_CHAT_BUDGET and LLM_CACHE_TTL_DAYS must be 0 or positive")
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
         EVAL_REPORTS_DIR.mkdir(parents=True, exist_ok=True)

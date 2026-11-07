@@ -13,6 +13,7 @@ used in app/pipeline/graph.py's REASONING_PROMPT_TEMPLATE.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -24,6 +25,7 @@ from app.documents.analyzer import analyze_document
 from app.documents.extractor import extract_document
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB -- generous for a contract/notice, not for a mistake
 _MAX_TEXT_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -81,7 +83,13 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentAnalysisOut:
     try:
         doc = await run_in_threadpool(extract_document, file_bytes, filename)
     except Exception as exc:  # noqa: BLE001 -- a corrupt/unreadable upload is a client error, not a crash
-        raise HTTPException(status_code=422, detail=f"Could not extract text from this file: {exc}") from exc
+        # The parser's own message names library internals; keep it in the
+        # server log and give the client a plain reason.
+        logger.warning("Could not extract text from an upload: %s: %s", type(exc).__name__, exc)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read this file. It may be corrupted or password-protected.",
+        ) from exc
 
     if not doc.full_text.strip():
         raise HTTPException(status_code=422, detail="No extractable text found -- this may be a scanned image PDF (OCR is not supported in this phase)")

@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 
 from starlette.responses import JSONResponse
 
@@ -124,5 +125,66 @@ class RateLimitMiddleware:
                 await response(scope, receive, send)
                 return
             bucket.append(now)
+
+        await self.app(scope, receive, send)
+
+
+class DailyQuotaMiddleware:
+    """Cap chat requests per client and in total per UTC day.
+
+    The per-minute limiter alone still lets one address send ~1,200 chats an
+    hour, and the free LLM tiers behind /chat run out after roughly 50
+    answers a day (Groq caps gpt-oss-120b at 200K tokens/day). Without a
+    daily cap one script can use up everyone's quota in minutes; with one,
+    users get a clear "limit reached" message instead of failed answers.
+    A limit of 0 disables that cap.
+    """
+
+    LIMITED_PATHS = frozenset({"/api/v1/chat"})
+
+    def __init__(self, app, per_client: int, total: int, trusted_proxy_hops: int = 0, clock=None):
+        self.app = app
+        self.per_client = per_client
+        self.total = total
+        self.trusted_proxy_hops = trusted_proxy_hops
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._day = None
+        self._total_used = 0
+        self._client_used: dict[str, int] = defaultdict(int)
+        self._lock = threading.Lock()
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http" or scope["method"] != "POST" or scope["path"] not in self.LIMITED_PATHS
+            or (self.per_client <= 0 and self.total <= 0)
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        now = self._clock()
+        client = client_ip(scope, self.trusted_proxy_hops)
+        with self._lock:
+            if now.date() != self._day:
+                self._day = now.date()
+                self._total_used = 0
+                self._client_used.clear()
+            if self.total > 0 and self._total_used >= self.total:
+                detail = "Vakeel AI has reached today's free usage limit. It resets at midnight UTC."
+            elif self.per_client > 0 and self._client_used[client] >= self.per_client:
+                detail = f"You've reached today's limit of {self.per_client} questions. It resets at midnight UTC."
+            else:
+                detail = None
+                self._total_used += 1
+                self._client_used[client] += 1
+
+        if detail is not None:
+            midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), tzinfo=now.tzinfo)
+            response = JSONResponse(
+                {"detail": detail},
+                status_code=429,
+                headers={"Retry-After": str(max(1, int((midnight - now).total_seconds())))},
+            )
+            await response(scope, receive, send)
+            return
 
         await self.app(scope, receive, send)

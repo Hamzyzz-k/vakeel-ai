@@ -4,7 +4,9 @@ import pytest
 
 from app.config import Settings
 from app.main import app
-from app.security import RateLimitMiddleware, client_ip
+from datetime import datetime, timedelta, timezone
+
+from app.security import DailyQuotaMiddleware, RateLimitMiddleware, client_ip
 
 
 def test_api_responses_include_security_headers():
@@ -95,6 +97,75 @@ def test_forwarded_header_ignored_without_trusted_proxies():
     for address in ("203.0.113.9", "198.51.100.4"):
         assert client.post("/api/v1/chat", headers={"X-Forwarded-For": address}).status_code == 200
     assert client.post("/api/v1/chat", headers={"X-Forwarded-For": "192.0.2.1"}).status_code == 429
+
+
+class _Clock:
+    def __init__(self):
+        self.now = datetime(2026, 11, 8, 23, 59, 30, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+
+def _quota_client(per_client: int, total: int, clock) -> TestClient:
+    quota_app = FastAPI()
+    quota_app.add_middleware(DailyQuotaMiddleware, per_client=per_client, total=total, trusted_proxy_hops=1, clock=clock)
+
+    @quota_app.post("/api/v1/chat")
+    def chat():
+        return {"ok": True}
+
+    @quota_app.post("/api/v1/documents/upload")
+    def upload():
+        return {"ok": True}
+
+    return TestClient(quota_app)
+
+
+def _ask(client, address):
+    return client.post("/api/v1/chat", headers={"X-Forwarded-For": address})
+
+
+def test_daily_quota_caps_each_client_until_the_utc_day_changes():
+    clock = _Clock()
+    client = _quota_client(per_client=2, total=0, clock=clock)
+    assert _ask(client, "203.0.113.9").status_code == 200
+    assert _ask(client, "203.0.113.9").status_code == 200
+    blocked = _ask(client, "203.0.113.9")
+    assert blocked.status_code == 429
+    assert "today's limit of 2 questions" in blocked.json()["detail"]
+    assert blocked.headers["retry-after"] == "30"  # seconds to midnight UTC
+    assert _ask(client, "198.51.100.4").status_code == 200
+
+    clock.now += timedelta(minutes=1)
+    assert _ask(client, "203.0.113.9").status_code == 200
+
+
+def test_daily_budget_caps_all_clients_together():
+    client = _quota_client(per_client=0, total=2, clock=_Clock())
+    assert _ask(client, "203.0.113.9").status_code == 200
+    assert _ask(client, "198.51.100.4").status_code == 200
+    blocked = _ask(client, "192.0.2.1")
+    assert blocked.status_code == 429
+    assert "free usage limit" in blocked.json()["detail"]
+
+
+def test_daily_quota_ignores_other_paths_and_rejected_requests_cost_nothing():
+    client = _quota_client(per_client=1, total=2, clock=_Clock())
+    for _ in range(3):
+        assert client.post("/api/v1/documents/upload").status_code == 200
+    assert _ask(client, "203.0.113.9").status_code == 200
+    for _ in range(3):
+        assert _ask(client, "203.0.113.9").status_code == 429
+    # The blocked retries above didn't spend the shared budget.
+    assert _ask(client, "198.51.100.4").status_code == 200
+
+
+def test_daily_quota_off_by_default_outside_cloud(monkeypatch):
+    for name in ("DEPLOY_MODE", "DAILY_CHAT_LIMIT_PER_CLIENT", "DAILY_CHAT_BUDGET", "LLM_CACHE_TTL_DAYS"):
+        monkeypatch.delenv(name, raising=False)
+    local = Settings()
+    assert (local.daily_chat_limit_per_client, local.daily_chat_budget, local.llm_cache_ttl_days) == (0, 0, 0)
 
 
 def test_client_ip_uses_nth_entry_from_the_right():

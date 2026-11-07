@@ -163,7 +163,11 @@ function Workspace({ onHome, initialMode = "Advice" }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, mode: MODE_TO_API[mode] }),
       }, CHAT_TIMEOUT_MS);
-      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      if (!res.ok) {
+        // Limit messages (429) carry a readable detail; show it, not the code.
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Server responded ${res.status}`);
+      }
       const data = await res.json();
 
       const aiMsg = {

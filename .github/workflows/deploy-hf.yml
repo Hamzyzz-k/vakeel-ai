@@ -17,6 +17,10 @@ concurrency:
   group: deploy-hf
   cancel-in-progress: true
 
+# Read-only token: no step needs to write to this repository.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     if: ${{ vars.HF_SPACE != '' }}

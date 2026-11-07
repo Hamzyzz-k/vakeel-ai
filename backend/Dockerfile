@@ -32,5 +32,11 @@ COPY --chown=vakeel:vakeel app ./app
 RUN python -m app.ingest.prepare_product_corpus \
     && python -m app.retrieval.build_product_index
 
+# Set only now: CLOUD mode refuses to start without CORS_ORIGINS and
+# TRUSTED_HOSTS, which the build steps above don't need. A deployed image
+# then can't fall back to LOCAL (open API docs, provider errors shown) just
+# because the platform variable was forgotten.
+ENV DEPLOY_MODE=CLOUD
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

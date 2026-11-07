@@ -278,6 +278,16 @@ def test_document_upload_rejects_file_disguised_as_pdf(tmp_path):
     assert response.status_code == 400
 
 
+def test_document_upload_hides_parser_errors(tmp_path):
+    client = _client(tmp_path)
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("broken.pdf", b"%PDF-1.7 not really a pdf", "application/pdf")},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Could not read this file. It may be corrupted or password-protected."
+
+
 def test_document_upload_rejects_binary_content_disguised_as_text(tmp_path):
     client = _client(tmp_path)
     response = client.post(

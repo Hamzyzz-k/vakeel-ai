@@ -15,7 +15,7 @@ from app.api.coverage import router as coverage_router
 from app.api.documents import router as documents_router
 from app.api.research import router as research_router
 from app.config import settings
-from app.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.security import DailyQuotaMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 app = FastAPI(
     title="Vakeel AI",
@@ -27,6 +27,14 @@ app = FastAPI(
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+# Added before (so inside) the per-minute limiter: requests that limiter
+# rejects never spend the daily allowance.
+app.add_middleware(
+    DailyQuotaMiddleware,
+    per_client=settings.daily_chat_limit_per_client,
+    total=settings.daily_chat_budget,
+    trusted_proxy_hops=settings.trusted_proxy_hops,
+)
 app.add_middleware(
     RateLimitMiddleware,
     max_requests=settings.rate_limit_requests,
