@@ -7,7 +7,7 @@ import SearchBar from "./components/SearchBar.jsx";
 import ChatArea from "./components/ChatArea.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import { useIsMobile } from "./hooks/useIsMobile.js";
-import { fetchWithTimeout, RequestTimeoutError } from "./lib/api.js";
+import { fetchWithTimeout, RequestTimeoutError, streamChat } from "./lib/api.js";
 
 const STORAGE_KEY = "vakeel_conversations_v1";
 const MODE_TO_API = { Advice: "advice", Research: "research" };
@@ -63,6 +63,8 @@ function Workspace({ onHome, initialMode = "Advice" }) {
   const [mode, setMode] = useState(initialMode);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  // The real pipeline stage reported by the streaming route, if any.
+  const [stage, setStage] = useState(null);
   // Not `useState(!isMobile)` -- useIsMobile() reports false on its very
   // first render (its real value only lands after its own useEffect runs),
   // so that would always initialize the sidebar open regardless of actual
@@ -157,18 +159,13 @@ function Workspace({ onHome, initialMode = "Advice" }) {
     setIsTyping(true);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
+    setStage(null);
     try {
-      const res = await fetchWithTimeout("/api/v1/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: question, mode: MODE_TO_API[mode] }),
-      }, CHAT_TIMEOUT_MS);
-      if (!res.ok) {
-        // Limit messages (429) carry a readable detail; show it, not the code.
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `Server responded ${res.status}`);
-      }
-      const data = await res.json();
+      const data = await streamChat(
+        { message: question, mode: MODE_TO_API[mode] },
+        setStage,
+        CHAT_TIMEOUT_MS,
+      );
 
       const aiMsg = {
         id: (Date.now() + 1).toString(),
@@ -186,6 +183,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
         coverage: data.coverage,
         generation_mode: data.generation_mode,
         provider_error: data.provider_error,
+        unverified: data.unverified,
       };
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, aiMsg] }));
     } catch (err) {
@@ -198,6 +196,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
       updateConversation(convId, (c) => ({ ...c, messages: [...c.messages, errMsg] }));
     } finally {
       setIsTyping(false);
+      setStage(null);
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }
@@ -315,6 +314,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
           messages={messages}
           isTyping={isTyping}
           serverWaking={serverWaking}
+          stage={stage}
           mode={mode}
           onQuickPrompt={onQuickPrompt}
           onRetry={retry}

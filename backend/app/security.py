@@ -71,7 +71,7 @@ class RateLimitMiddleware:
     replace it with a shared Redis/API-gateway limiter.
     """
 
-    LIMITED_PATHS = frozenset({"/api/v1/chat", "/api/v1/documents/upload"})
+    LIMITED_PATHS = frozenset({"/api/v1/chat", "/api/v1/chat/stream", "/api/v1/documents/upload"})
     _SWEEP_ABOVE = 1024
 
     def __init__(self, app, max_requests: int, window_seconds: int, trusted_proxy_hops: int = 0):
@@ -140,7 +140,7 @@ class DailyQuotaMiddleware:
     A limit of 0 disables that cap.
     """
 
-    LIMITED_PATHS = frozenset({"/api/v1/chat"})
+    LIMITED_PATHS = frozenset({"/api/v1/chat", "/api/v1/chat/stream"})
 
     def __init__(self, app, per_client: int, total: int, trusted_proxy_hops: int = 0, clock=None):
         self.app = app

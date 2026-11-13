@@ -4,6 +4,7 @@ here as each phase lands (api/chat.py, api/research.py, ...).
 """
 from __future__ import annotations
 
+import logging
 import threading
 
 from fastapi import FastAPI
@@ -16,6 +17,8 @@ from app.api.documents import router as documents_router
 from app.api.research import router as research_router
 from app.config import settings
 from app.security import DailyQuotaMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
     title="Vakeel AI",
@@ -52,22 +55,27 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _warm_vector_index() -> None:
-    # Loading the embedder takes ~13s on CPU (measured). Lazily, the first
-    # user after every restart paid it inside their query; load it in the
-    # background instead so /health answers immediately meanwhile.
-    if not settings.enable_vector_retrieval:
-        return
-
+def _warm_retrieval() -> None:
+    # Loading the embedder takes ~13s on CPU, and even without it the first
+    # searches after a start were slow (retrieval 3.3s, then 1.3s, 0.7s,
+    # then 0.3s warm) while SQLite pages and the FTS index came off disk.
+    # Run one throwaway retrieval in the background so the first user
+    # doesn't pay for it; /health answers immediately meanwhile.
     def warm() -> None:
-        from app.pipeline.graph import PRODUCT_VECTOR_INDEX
+        from app.api.chat import _get_repo
+        from app.pipeline.graph import PRODUCT_VECTOR_INDEX, run_retrieval
+        from app.pipeline.state import LegalQueryState
         from app.retrieval.vectors import embed_texts
 
-        if PRODUCT_VECTOR_INDEX.exists():
-            PRODUCT_VECTOR_INDEX.load()
-            embed_texts(["warm-up"])
+        try:
+            if settings.enable_vector_retrieval and PRODUCT_VECTOR_INDEX.exists():
+                PRODUCT_VECTOR_INDEX.load()
+                embed_texts(["warm-up"])
+            run_retrieval(LegalQueryState(user_query="compensation for breach of contract by the seller"), _get_repo())
+        except Exception:  # noqa: BLE001 -- warm-up is an optimisation; a failure must not stop the app
+            logger.warning("Retrieval warm-up failed", exc_info=True)
 
-    threading.Thread(target=warm, name="vector-warmup", daemon=True).start()
+    threading.Thread(target=warm, name="retrieval-warmup", daemon=True).start()
 
 
 app.include_router(chat_router)

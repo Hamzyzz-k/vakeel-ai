@@ -304,3 +304,68 @@ def test_document_upload_enforces_smaller_text_limit(tmp_path):
         files={"file": ("large.txt", b"a" * (2 * 1024 * 1024 + 1), "text/plain")},
     )
     assert response.status_code == 413
+
+
+def _sse_events(body: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in body.strip().split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in block.splitlines())
+        events.append((fields["event"], json.loads(fields["data"])))
+    return events
+
+
+def test_chat_stream_reports_real_stages_then_the_same_answer_as_chat(tmp_path):
+    client = _client(tmp_path)
+    question = {"message": "What compensation can I claim for breach?"}
+    resp = client.post("/api/v1/chat/stream", json=question)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    events = _sse_events(resp.text)
+    stages = [data["stage"] for name, data in events if name == "stage"]
+    assert stages == ["reading", "searching", "writing", "checking"]
+    writing = next(data for name, data in events if name == "stage" and data["stage"] == "writing")
+    assert writing["sources"] == ["Contract Act - Section 73"]
+
+    name, final = events[-1]
+    assert name == "final"
+    plain = client.post("/api/v1/chat", json=question).json()
+    final.pop("timings"), plain.pop("timings")
+    assert final == plain
+
+
+def test_chat_stream_sends_an_error_event_when_the_pipeline_fails(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("internal detail that must not reach the client")
+
+    monkeypatch.setattr(chat_module, "run_query", boom)
+    events = _sse_events(client.post("/api/v1/chat/stream", json={"message": "test question"}).text)
+    assert events[0] == ("stage", {"stage": "reading"})
+    assert events[-1][0] == "error"
+    assert "internal detail" not in events[-1][1]["detail"]
+
+
+class _StubWithUnbackedStep(StubLLM):
+    def generate(self, prompt, json_schema=None, use_cache=True):
+        return LLMResponse(
+            text=(
+                "The breaching party must pay compensation for loss caused by breach [S1]. "
+                "Keep copies of every invoice and email about the deal. "
+                "The court will also award punitive damages of 500 rupees [S1]."
+            ),
+            provider="stub", model="stub", from_cache=False,
+        )
+
+
+def test_chat_lists_unbacked_sentences_separately_but_hides_contradictions(tmp_path):
+    client = _client(tmp_path)
+    chat_module._llm = _StubWithUnbackedStep()
+    data = client.post("/api/v1/chat", json={"message": "What compensation can I claim for breach?"}).json()
+    assert data["abstained"] is False
+    assert "invoice" not in data["answer"]
+    assert data["unverified"] == ["Keep copies of every invoice and email about the deal."]
+    # "500" isn't in the source: a contradiction, so it is never shown.
+    assert not any("500" in sentence for sentence in data["unverified"])
+    assert set(data["timings"]) >= {"intake", "retrieval", "reasoning", "citation_verification"}

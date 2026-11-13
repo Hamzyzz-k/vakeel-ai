@@ -115,6 +115,10 @@ def _quota_client(per_client: int, total: int, clock) -> TestClient:
     def chat():
         return {"ok": True}
 
+    @quota_app.post("/api/v1/chat/stream")
+    def chat_stream():
+        return {"ok": True}
+
     @quota_app.post("/api/v1/documents/upload")
     def upload():
         return {"ok": True}
@@ -178,6 +182,16 @@ def test_cloud_per_client_cap_needs_trusted_proxy_hops(monkeypatch):
     assert (Settings().daily_chat_limit_per_client, Settings().daily_chat_budget) == (0, 100)
     monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
     assert Settings().daily_chat_limit_per_client == 25
+
+
+def test_stream_route_shares_the_chat_limits():
+    # The stream route runs the same LLM calls; without this it would
+    # bypass both the per-minute and the daily caps.
+    client = _quota_client(per_client=2, total=0, clock=_Clock())
+    assert _ask(client, "203.0.113.9").status_code == 200
+    assert client.post("/api/v1/chat/stream", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 200
+    assert client.post("/api/v1/chat/stream", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 429
+    assert "/api/v1/chat/stream" in RateLimitMiddleware.LIMITED_PATHS
 
 
 def test_client_ip_uses_nth_entry_from_the_right():

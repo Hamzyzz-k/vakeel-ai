@@ -29,7 +29,7 @@ from app.legal.ipc_bns_mapping import EFFECTIVE_DATE
 from app.legal.query_bridge import augment_search_queries, find_ipc_references
 from app.legal.statute_catalog import INGESTIBLE_STATUTES, get_statute_by_title
 from app.legal.statute_reference import extract_concept_references, extract_statute_references
-from app.pipeline.citation import cited_claims, split_sentences, verify_answer, verify_irac
+from app.pipeline.citation import UNCITED_REASON, cited_claims, split_sentences, verify_answer, verify_irac
 from app.pipeline.citation_graph import build_citation_graph, detect_conflicts
 from app.pipeline.evidence_score import compute_evidence_score
 from app.pipeline.safety import (
@@ -521,10 +521,13 @@ def _support_verdicts(state: LegalQueryState, llm: LLMProvider, texts) -> dict[t
     return dict(zip(pairs, verdicts)) if verdicts is not None else None
 
 
-def run_query(user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, mode: str = "advice") -> LegalQueryState:
+def run_query(
+    user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, mode: str = "advice", on_event=None,
+) -> LegalQueryState:
     """The full pipeline, in one call. Returns the complete auditable state,
-    not just the answer -- state.trace explains every step's outcome."""
-    state = LegalQueryState(user_query=user_query, mode=mode)
+    not just the answer -- state.trace explains every step's outcome.
+    `on_event` receives each trace event as it happens (see state.py)."""
+    state = LegalQueryState(user_query=user_query, mode=mode, on_event=on_event)
 
     coverage_started = time.perf_counter()
     covered, coverage_reason = assess_corpus_coverage(state)
@@ -557,7 +560,7 @@ def run_query(user_query: str, repo: SQLiteCorpusRepository, llm: LLMProvider, m
         # mitigation for a real model limitation, not a loop to paper over
         # a query the corpus genuinely can't answer.
         uncited_only = state.rejected_claims and all(
-            c.rejection_reason == "legal claim has no source citation" for c in state.rejected_claims
+            c.rejection_reason == UNCITED_REASON for c in state.rejected_claims
         )
         if (
             state.generation_mode == "llm"

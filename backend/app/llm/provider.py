@@ -143,6 +143,7 @@ class LLMProvider:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
+            "max_completion_tokens": settings.groq_max_completion_tokens,
         }
         if settings.groq_reasoning_effort:
             # The reasoning trace is never shown or stored; don't ship it.
