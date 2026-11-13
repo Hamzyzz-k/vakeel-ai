@@ -1,14 +1,21 @@
-"""Download verified statute PDFs and build the deployable product corpus."""
+"""Gather the verified statute PDFs and build the deployable product corpus."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import httpx
 
+from app.config import BACKEND_ROOT
 from app.ingest.load_statutes import STATUTES_DIR, main as load_statutes
 from app.legal.statute_catalog import INGESTIBLE_STATUTES, StatuteSpec
 
 _MAX_STATUTE_BYTES = 20 * 1024 * 1024
+# Copies of the India Code PDFs shipped with the backend. Image builds use
+# these instead of downloading: indiacode.gov.in started answering 401 to
+# the build's plain HTTP client (2026-11-07), which failed every deploy.
+# The download below remains for a statute that isn't bundled yet.
+BUNDLED_STATUTES_DIR = BACKEND_ROOT / "statutes"
 
 
 def download_statute(spec: StatuteSpec) -> Path:
@@ -19,6 +26,11 @@ def download_statute(spec: StatuteSpec) -> Path:
         return destination
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    bundled = BUNDLED_STATUTES_DIR / spec.filename
+    if bundled.exists() and bundled.read_bytes()[:5] == b"%PDF-":
+        shutil.copyfile(bundled, destination)
+        return destination
+
     temporary = destination.with_suffix(".pdf.part")
     total = 0
     first_bytes = b""

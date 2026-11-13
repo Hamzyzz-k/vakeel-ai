@@ -61,6 +61,10 @@ must if then than so such very also into onto upon under over between
 
 _nli_cache: dict[str, object] = {}
 
+UNCITED_REASON = "legal claim has no source citation"
+UNSUPPORTED_REASON = "cited source does not support this claim"
+CONTRADICTION_REASON = "contradicts a number or negation in the source"
+
 # Some models (seen with gpt-oss-120b) typeset with narrow/no-break spaces
 # and non-breaking hyphens -- "recover it [S4]", "Section 45". Fold
 # them to plain ASCII before splitting and matching so typography can't
@@ -68,6 +72,9 @@ _nli_cache: dict[str, object] = {}
 _MODEL_TEXT_NORMALIZATION = str.maketrans({
     " ": " ", " ": " ", " ": " ", " ": " ",
     "‐": "-", "‑": "-",
+    # Full-width brackets: "【S3】" was seen on a live RERA answer, and with
+    # no recognisable label every sentence was rejected as uncited.
+    "【": "[", "】": "]",
 })
 
 
@@ -131,11 +138,48 @@ def lexical_overlap(claim: str, evidence: str) -> float:
     return len(claim_tokens & evidence_tokens) / len(claim_tokens)
 
 
+_UNITS = {
+    word: value for value, word in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+        "fifteen sixteen seventeen eighteen nineteen".split()
+    )
+}
+_TENS = {
+    word: 10 * (index + 2)
+    for index, word in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())
+}
+_NUMBER_WORD = "|".join([*_UNITS, *_TENS, "hundred"])
+_NUMBER_PHRASE_RE = re.compile(
+    rf"\b(?:{_NUMBER_WORD})(?:(?:\s+and\s+|[\s-]+)(?:{_NUMBER_WORD}))*\b", re.IGNORECASE,
+)
+
+
+def _phrase_value(phrase: str) -> int:
+    value = 0
+    for word in re.findall(r"[a-z]+", phrase.lower()):
+        if word == "hundred":
+            value = max(value, 1) * 100
+        else:
+            value += _UNITS.get(word, 0) + _TENS.get(word, 0)
+    return value
+
+
+def _numbers_in(text: str) -> set[str]:
+    """Digits plus spelled-out numbers ("thirty days", "one hundred and
+    eighty days") as digit strings. Statutes mostly spell periods out (628
+    of 4,132 product sources), so digits alone vetoed correct claims such as
+    "within 30 days" against s.138's "within thirty days"."""
+    numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", text))
+    numbers.update(str(_phrase_value(match.group())) for match in _NUMBER_PHRASE_RE.finditer(text))
+    return numbers
+
+
 def has_high_impact_contradiction(claim: str, evidence: str) -> bool:
     """Catch deterministic contradictions that token overlap cannot see."""
+    # Only the claim's digits are checked: also converting its words would
+    # newly veto ordinary phrases such as "one of the conditions".
     claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim))
-    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", evidence))
-    if not claim_numbers.issubset(evidence_numbers):
+    if not claim_numbers.issubset(_numbers_in(evidence)):
         return True
 
     claim_has_negation = bool(re.search(r"\b(?:no|not|never|without)\b", claim, re.IGNORECASE))
@@ -264,7 +308,7 @@ def verify_text(
                 rejected.append(
                     VerifiedClaim(
                         sentence=bare, cited_labels=[], exists=False, supported=False,
-                        rejection_reason="legal claim has no source citation",
+                        rejection_reason=UNCITED_REASON,
                     )
                 )
             continue
@@ -280,16 +324,22 @@ def verify_text(
             continue
 
         evidence = claim_evidence(labels, by_label)
+        contradicts = has_high_impact_contradiction(bare, evidence)
         if judged is not None and (bare, evidence) in judged:
             score = lexical_overlap(bare, evidence)
-            supported = judged[(bare, evidence)] and not has_high_impact_contradiction(bare, evidence)
+            supported = judged[(bare, evidence)] and not contradicts
         else:
             supported, score = verify_claim(bare, evidence, use_nli=use_nli)
 
+        if supported:
+            reason = None
+        elif contradicts:
+            reason = CONTRADICTION_REASON
+        else:
+            reason = UNSUPPORTED_REASON
         claim = VerifiedClaim(
             sentence=bare, cited_labels=labels, exists=True,
-            supported=supported, support_score=score,
-            rejection_reason=None if supported else "cited source does not support this claim",
+            supported=supported, support_score=score, rejection_reason=reason,
         )
         if supported:
             verified.append(claim)

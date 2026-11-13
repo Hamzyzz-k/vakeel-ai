@@ -101,7 +101,52 @@ function WelcomeView({ mode, onQuickPrompt }) {
   );
 }
 
-function WorkingStatus({ mode }) {
+// Real pipeline stages from the streaming route, in order. Each is shown
+// only once the backend reports that it has started.
+const LIVE_STAGES = {
+  reading: ["Reading your question", "Identifying the legal issue and jurisdiction"],
+  searching: ["Searching the loaded laws", "Retrieving the strongest sections and rules"],
+  writing: ["Writing the answer", "Using only the sections found"],
+  checking: ["Checking every citation", "Removing any sentence its source doesn't support"],
+};
+
+function WorkingStatus({ mode, stage }) {
+  if (mode === "chat" && stage && LIVE_STAGES[stage.stage]) {
+    const [label, detail] = LIVE_STAGES[stage.stage];
+    const found = stage.sources || [];
+    return (
+      <StatusBubble label={label} detail={found.length ? `Found: ${found.slice(0, 3).join("; ")}` : detail} />
+    );
+  }
+  return <RotatingStatus mode={mode} />;
+}
+
+function StatusBubble({ label, detail }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex items-end gap-2.5 justify-start"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="w-7 h-7 rounded-full bg-[var(--ink)] flex items-center justify-center flex-shrink-0">
+        <Scales size={15} weight="bold" className="text-[var(--canvas)]" />
+      </div>
+      <div className="rounded-3xl rounded-bl-lg border border-[var(--line)] bg-[var(--paper)] px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
+          <span className="text-xs font-semibold text-[var(--ink)]">{label}</span>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">{detail}</p>
+      </div>
+    </motion.div>
+  );
+}
+
+// Used while waking the server, for document uploads, and before the first
+// real stage arrives (or against a backend without the streaming route).
+function RotatingStatus({ mode }) {
   const [step, setStep] = useState(0);
   const stages = mode === "waking"
     ? [["Waking the server", "The free host sleeps when idle, so this first answer can take up to a minute"]]
@@ -125,25 +170,27 @@ function WorkingStatus({ mode }) {
   }, [mode, stages.length]);
 
   const [label, detail] = stages[step];
+  return <StatusBubble label={label} detail={detail} />;
+}
+
+// Sentences the model wrote that no supplied section backs (often practical
+// steps). Kept out of the answer and collapsed, so they read as unchecked
+// suggestions, never as verified law.
+function UnverifiedNotes({ items }) {
+  if (!items || items.length === 0) return null;
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex items-end gap-2.5 justify-start"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="w-7 h-7 rounded-full bg-[var(--ink)] flex items-center justify-center flex-shrink-0">
-        <Scales size={15} weight="bold" className="text-[var(--canvas)]" />
-      </div>
-      <div className="rounded-3xl rounded-bl-lg border border-[var(--line)] bg-[var(--paper)] px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
-          <span className="text-xs font-semibold text-[var(--ink)]">{label}</span>
-        </div>
-        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">{detail}</p>
-      </div>
-    </motion.div>
+    <details className="group mt-3 border-t border-[var(--line)] pt-3">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]/75 hover:text-[var(--ink-muted)]">
+        <Warning size={15} weight="bold" />
+        Not verified against the loaded law ({items.length})
+      </summary>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ink-muted)]/80">
+        The model also wrote these, but none of the cited sections states them. Treat them as unchecked suggestions.
+      </p>
+      <ul className="mt-1.5 space-y-1 text-xs leading-relaxed text-[var(--ink-muted)]">
+        {items.map((item, index) => <li key={index}>— {item}</li>)}
+      </ul>
+    </details>
   );
 }
 
@@ -349,6 +396,7 @@ function MessageBubble({ msg, onRetry }) {
               <ConflictNotice conflicts={msg.conflicts} />
               <TemporalNotes notes={msg.temporal_notes} />
               {!msg.abstained && <MissingInformation items={msg.missing_information} />}
+              {!msg.abstained && <UnverifiedNotes items={msg.unverified} />}
               <SourcePanel sources={msg.sources} mode={msg.mode} />
               {msg.legal_domain && (
                 <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-[var(--ink-muted)]/80">
@@ -366,7 +414,7 @@ function MessageBubble({ msg, onRetry }) {
   );
 }
 
-export default function ChatArea({ activeId, messages, isTyping, serverWaking, mode, onQuickPrompt, onRetry }) {
+export default function ChatArea({ activeId, messages, isTyping, serverWaking, stage, mode, onQuickPrompt, onRetry }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -393,7 +441,7 @@ export default function ChatArea({ activeId, messages, isTyping, serverWaking, m
               <MessageBubble key={msg.id} msg={msg} onRetry={msg.retryQuestion ? () => onRetry(msg) : null} />
             ))}
 
-            {isTyping && <WorkingStatus mode={serverWaking ? "waking" : "chat"} />}
+            {isTyping && <WorkingStatus mode={serverWaking ? "waking" : "chat"} stage={stage} />}
 
             <div ref={bottomRef} />
           </motion.div>

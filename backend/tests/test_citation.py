@@ -253,3 +253,39 @@ def test_remapped_label_still_needs_support():
     assert verified == []
     assert rejected[0].exists is True
     assert rejected[0].supported is False
+
+
+_NI_138 = RetrievedSource(
+    label="S1", source_id="ni138", title="The Negotiable Instruments Act, 1881 - Section 138",
+    text="The payee makes a demand by giving a notice in writing to the drawer within thirty days "
+         "of the receipt of information, and the drawer fails to pay within fifteen days of the receipt of the notice.",
+    source_type="SECTION",
+)
+
+
+def test_full_width_citation_brackets_are_recognised():
+    state = make_state("The drawer must pay within fifteen days of the notice 【S1】.", [_NI_138])
+    verify_answer(state, use_nli=False)
+    assert [c.cited_labels for c in state.verified_claims] == [["S1"]]
+
+
+def test_digits_match_numbers_the_statute_spells_out():
+    from app.pipeline.citation import has_high_impact_contradiction
+
+    evidence = _NI_138.text
+    assert not has_high_impact_contradiction("Notice must be given within 30 days [S1].", evidence)
+    assert not has_high_impact_contradiction("The drawer then has 15 days to pay [S1].", evidence)
+    assert has_high_impact_contradiction("Notice must be given within 60 days [S1].", evidence)
+    assert not has_high_impact_contradiction("within 180 days", "within one hundred and eighty days")
+    assert not has_high_impact_contradiction("within 21 days", "within twenty-one days")
+
+
+def test_judge_approval_cannot_override_a_number_contradiction():
+    from app.pipeline.citation import CONTRADICTION_REASON, claim_evidence, verify_text
+
+    by_label = {"S1": _NI_138}
+    claim = "Notice must be given within 60 days."
+    judged = {(claim, claim_evidence(["S1"], by_label)): True}
+    _, verified, rejected = verify_text(f"{claim[:-1]} [S1].", by_label, use_nli=False, judged=judged)
+    assert not verified
+    assert rejected[0].rejection_reason == CONTRADICTION_REASON

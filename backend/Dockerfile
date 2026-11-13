@@ -1,5 +1,12 @@
 FROM python:3.12-slim
 
+# Off by default: Render's free instance (512MB) can't hold torch plus the
+# embedder, so the default image skips the embedder download and the
+# 9,823-chunk index build, and runs without the vector arm whatever its
+# dashboard variables say. The Hugging Face deploy (16GB) flips this to
+# true when it assembles the Space (.github/workflows/deploy-hf.yml).
+ARG ENABLE_VECTOR_RETRIEVAL=false
+
 # Hugging Face Spaces runs containers as UID 1000; building as that same
 # user keeps the corpus, vector index and model cache writable at runtime.
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,7 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/home/vakeel/.local/bin:$PATH \
     HF_HOME=/home/vakeel/.cache/huggingface \
     USE_GPU=false \
-    ENABLE_VECTOR_RETRIEVAL=true \
+    ENABLE_VECTOR_RETRIEVAL=${ENABLE_VECTOR_RETRIEVAL} \
     ENABLE_CROSS_ENCODER=false
 
 RUN useradd --create-home --uid 1000 vakeel \
@@ -26,11 +33,16 @@ RUN pip install --user --upgrade pip \
 
 # The embedder loads with local_files_only, so it must be baked into the
 # image rather than fetched on the first query.
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5')"
+RUN if [ "$ENABLE_VECTOR_RETRIEVAL" != "false" ]; then \
+        python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5')"; \
+    fi
 
+# Bundled India Code PDFs: the corpus build reads these rather than
+# downloading from indiacode.gov.in, which now refuses the build's client.
+COPY --chown=vakeel:vakeel statutes ./statutes
 COPY --chown=vakeel:vakeel app ./app
 RUN python -m app.ingest.prepare_product_corpus \
-    && python -m app.retrieval.build_product_index
+    && if [ "$ENABLE_VECTOR_RETRIEVAL" != "false" ]; then python -m app.retrieval.build_product_index; fi
 
 # Set only now: CLOUD mode refuses to start without CORS_ORIGINS and
 # TRUSTED_HOSTS, which the build steps above don't need. A deployed image

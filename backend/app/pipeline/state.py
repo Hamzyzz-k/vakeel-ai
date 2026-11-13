@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 Mode = Literal["advice", "research"]
 
@@ -105,11 +105,18 @@ class LegalQueryState:
     final_answer: str = ""
 
     trace: list[TraceEvent] = field(default_factory=list)
+    # Called with each finished TraceEvent as it is recorded; the streaming
+    # endpoint uses it to show real progress. Every step already records
+    # itself, so this needs no change to the pipeline's control flow.
+    on_event: Callable[[TraceEvent, "LegalQueryState"], None] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
     def record(self, step: str, detail: dict[str, Any], started_at: float) -> None:
-        self.trace.append(
-            TraceEvent(step=step, detail=detail, duration_ms=(time.perf_counter() - started_at) * 1000)
-        )
+        event = TraceEvent(step=step, detail=detail, duration_ms=(time.perf_counter() - started_at) * 1000)
+        self.trace.append(event)
+        if self.on_event is not None:
+            self.on_event(event, self)
 
     def sources_by_label(self) -> dict[str, RetrievedSource]:
         return {s.label: s for s in self.retrieved_sources}

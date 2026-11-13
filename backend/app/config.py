@@ -61,6 +61,13 @@ class Settings:
     # trims latency and tokens; the citation checks still gate every
     # sentence of whatever comes back. Empty omits it.
     groq_reasoning_effort: str = field(default_factory=lambda: os.environ.get("GROQ_REASONING_EFFORT", "low").strip())
+    # Upper bound on one reply, reasoning included. The longest measured
+    # output (a Research note) is ~1,800 characters, well under this; the
+    # cap only stops a runaway reply from stretching latency and spending
+    # the 200K tokens/day free budget.
+    groq_max_completion_tokens: int = field(
+        default_factory=lambda: int(os.environ.get("GROQ_MAX_COMPLETION_TOKENS", "2048"))
+    )
 
     ollama_host: str = field(default_factory=lambda: os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
     ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "llama3.2:3b"))
