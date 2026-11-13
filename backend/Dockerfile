@@ -1,10 +1,11 @@
 FROM python:3.12-slim
 
-# Render passes its service variables as build args, and its 512MB free
-# instance runs with vector retrieval off (render.yaml), so there the
-# embedder download and the 9,823-chunk index build are skipped. Hugging
-# Face (16GB) keeps the default and builds both.
-ARG ENABLE_VECTOR_RETRIEVAL=true
+# Off by default: Render's free instance (512MB) can't hold torch plus the
+# embedder, so the default image skips the embedder download and the
+# 9,823-chunk index build, and runs without the vector arm whatever its
+# dashboard variables say. The Hugging Face deploy (16GB) flips this to
+# true when it assembles the Space (.github/workflows/deploy-hf.yml).
+ARG ENABLE_VECTOR_RETRIEVAL=false
 
 # Hugging Face Spaces runs containers as UID 1000; building as that same
 # user keeps the corpus, vector index and model cache writable at runtime.

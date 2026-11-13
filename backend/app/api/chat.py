@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from fastapi import APIRouter
@@ -130,6 +132,17 @@ def _source_out(s, repo: SQLiteCorpusRepository, supports: list[str] | None = No
 
 
 _SHOWN_AS_UNVERIFIED = {UNSUPPORTED_REASON, UNCITED_REASON}
+# An uncited sentence never meets the number check (that needs a cited
+# source), so one carrying a figure, a provision or a case name ("file
+# within 45 days", "under Section 12", "X v. Y") could be invented outright.
+# Those stay hidden; only plain-language suggestions are shown.
+_SPECIFIC_LEGAL_DETAIL = re.compile(r"\d|\b(?:section|sections|rule|article|clause)\b|\s+v\.?\s+|\b[A-Z][a-z]+ Act\b", re.IGNORECASE)
+
+
+def _shown_as_unverified(claim) -> bool:
+    if claim.rejection_reason not in _SHOWN_AS_UNVERIFIED:
+        return False
+    return claim.rejection_reason != UNCITED_REASON or not _SPECIFIC_LEGAL_DETAIL.search(claim.sentence)
 
 
 def _timings(state) -> dict[str, float]:
@@ -158,6 +171,11 @@ _NEXT_STAGE = {
     "reasoning_failed": "checking", "reasoning_research_failed": "checking",
 }
 _STREAM_TIMEOUT_SECONDS = 180
+# Streamed chats run here rather than on a fresh thread each: the
+# repository keeps one SQLite connection per thread until shutdown, so a
+# thread per request leaked a connection per request (measured: 10 streams,
+# 10 extra connections). Reused workers bound that at the pool size.
+_stream_workers = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
 
 
 def _sse(event: str, data: dict) -> str:
@@ -201,7 +219,7 @@ def chat_stream(req: ChatRequest) -> StreamingResponse:
 
     def stream():
         yield _sse("stage", {"stage": "reading"})
-        threading.Thread(target=work, name="chat-stream", daemon=True).start()
+        _stream_workers.submit(work)
         while True:
             try:
                 item = events.get(timeout=_STREAM_TIMEOUT_SECONDS)
@@ -250,7 +268,7 @@ def build_chat_response(state) -> ChatResponse:
         provider_error=state.provider_error if settings.expose_provider_errors else None,
         unverified=[] if state.abstained else [
             claim.sentence if claim.sentence.endswith((".", "?", "!")) else f"{claim.sentence}."
-            for claim in state.rejected_claims if claim.rejection_reason in _SHOWN_AS_UNVERIFIED
+            for claim in state.rejected_claims if _shown_as_unverified(claim)
         ],
         timings=_timings(state),
     )

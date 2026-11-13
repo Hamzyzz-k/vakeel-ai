@@ -34,6 +34,10 @@ jobs:
           mkdir space
           cp -r backend/. space/
           cp deploy/hf-space/README.md space/README.md
+          # The image defaults to no vector retrieval (sized for Render's
+          # 512MB); the Space has room for the embedder and index.
+          sed -i 's/^ARG ENABLE_VECTOR_RETRIEVAL=false$/ARG ENABLE_VECTOR_RETRIEVAL=true/' space/Dockerfile
+          grep -q '^ARG ENABLE_VECTOR_RETRIEVAL=true$' space/Dockerfile
           rm -rf space/tests space/data space/.venv
           find space -name "__pycache__" -type d -prune -exec rm -rf {} +
 

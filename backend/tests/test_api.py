@@ -353,6 +353,8 @@ class _StubWithUnbackedStep(StubLLM):
             text=(
                 "The breaching party must pay compensation for loss caused by breach [S1]. "
                 "Keep copies of every invoice and email about the deal. "
+                "File your claim within 45 days or you lose it. "
+                "Section 12 of the Sale of Goods Act also lets you rescind. "
                 "The court will also award punitive damages of 500 rupees [S1]."
             ),
             provider="stub", model="stub", from_cache=False,
@@ -366,6 +368,15 @@ def test_chat_lists_unbacked_sentences_separately_but_hides_contradictions(tmp_p
     assert data["abstained"] is False
     assert "invoice" not in data["answer"]
     assert data["unverified"] == ["Keep copies of every invoice and email about the deal."]
-    # "500" isn't in the source: a contradiction, so it is never shown.
-    assert not any("500" in sentence for sentence in data["unverified"])
+    # "500" contradicts the cited source; the uncited "45 days" and
+    # "Section 12" could be invented outright. None of them is shown.
     assert set(data["timings"]) >= {"intake", "retrieval", "reasoning", "citation_verification"}
+
+
+def test_streamed_chats_reuse_database_connections(tmp_path):
+    # A thread per streamed chat used to leave one SQLite connection open
+    # per request for the life of the process.
+    client = _client(tmp_path)
+    for _ in range(12):
+        client.post("/api/v1/chat/stream", json={"message": "What compensation can I claim for breach?"})
+    assert len(chat_module._repo._connections) <= 1 + chat_module._stream_workers._max_workers
