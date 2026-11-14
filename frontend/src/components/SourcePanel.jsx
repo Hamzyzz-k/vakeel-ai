@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowSquareOut, CaretDown } from "@phosphor-icons/react";
 
 // Citation panel (spec section 34): lists the labelled sources a message's
@@ -6,36 +6,45 @@ import { ArrowSquareOut, CaretDown } from "@phosphor-icons/react";
 // the backend enforces in verify_answer -- see
 // backend/app/pipeline/citation.py -- so this list is never a guess about
 // what the model might have meant.
-function SourceItem({ s }) {
+function SourceItem({ s, focus }) {
   const [expanded, setExpanded] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const itemRef = useRef(null);
+
+  // Clicking an inline citation in the answer opens that section's exact
+  // text here and marks it briefly, so the reader sees what was cited.
+  useEffect(() => {
+    if (!focus || focus.label !== s.label) return undefined;
+    setExpanded(true);
+    setFlash(true);
+    itemRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const timer = window.setTimeout(() => setFlash(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [focus, s.label]);
 
   return (
-    <li className="rounded-xl border border-[var(--line)] bg-[var(--taupe)]/35 px-3 py-2 text-xs">
+    <li
+      ref={itemRef}
+      className={`rounded-[2px] border px-3 py-2.5 text-xs transition-colors duration-500 ${
+        flash ? "border-[var(--ink)] bg-[var(--sage-soft)]" : "border-[var(--line)] bg-[var(--canvas)]"
+      }`}
+    >
       <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 shrink-0 rounded-md bg-[var(--taupe)]/55 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[var(--ink)]">
+        <span className="mt-px shrink-0 rounded-[2px] border border-[var(--line-strong)] bg-[var(--paper)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--ink)]">
           {s.label}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-[var(--ink)]">{s.title}</div>
-          <div className="mt-0.5 text-[var(--ink-muted)]">
-            {s.source_type}
-            {s.act_name && s.section_no ? ` · ${s.act_name}, s.${s.section_no}` : ""}
-          </div>
-          {s.supports?.length > 0 && (
-            <div className="mt-2 border-l-2 border-[var(--sage)] pl-2 text-[11px] leading-relaxed text-[var(--ink-muted)]">
-              <span className="font-semibold text-[var(--olive)]">Supports: </span>
-              {s.supports[0]}
-              {s.supports.length > 1 && <span className="text-[var(--ink-muted)]/70"> +{s.supports.length - 1} more claim{s.supports.length > 2 ? "s" : ""}</span>}
-            </div>
-          )}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="font-medium leading-snug text-[var(--ink)]">{s.title}</div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
             {s.text && (
               <button
+                type="button"
                 onClick={() => setExpanded((v) => !v)}
-                className="flex items-center gap-1 font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150"
+                aria-expanded={expanded}
+                className="flex items-center gap-1 font-medium text-[var(--ink-muted)] transition-colors duration-150 hover:text-[var(--ink)]"
               >
                 <CaretDown size={12} weight="bold" className={`transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
-                {expanded ? "Hide text" : "Show exact text"}
+                {expanded ? "Hide exact text" : "Show exact text"}
               </button>
             )}
             {s.url && (
@@ -43,7 +52,7 @@ function SourceItem({ s }) {
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1 font-medium text-[var(--ink-muted)]/80 hover:text-[var(--ink)] transition-colors duration-150"
+                className="flex items-center gap-1 font-medium text-[var(--ink-muted)] transition-colors duration-150 hover:text-[var(--ink)]"
               >
                 Official source <ArrowSquareOut size={11} weight="bold" />
               </a>
@@ -52,7 +61,7 @@ function SourceItem({ s }) {
         </div>
       </div>
       {expanded && s.text && (
-        <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[var(--line)] bg-[var(--paper)] p-2.5 text-[11px] leading-relaxed text-[var(--ink)]">
+        <pre className="mt-2.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-[2px] border border-[var(--line)] bg-[var(--paper)] p-3 font-sans text-[11.5px] leading-relaxed text-[var(--ink)]">
           {s.text}
         </pre>
       )}
@@ -60,22 +69,20 @@ function SourceItem({ s }) {
   );
 }
 
-export default function SourcePanel({ sources, mode }) {
+// Always open: the cited law is the product's evidence, not an extra.
+export default function SourcePanel({ sources, focus }) {
   if (!sources || sources.length === 0) return null;
 
-  const isResearch = mode === "Research";
-
   return (
-    <details className="mt-4 group border-t border-[var(--line)] pt-3" open={isResearch || undefined}>
-      <summary className="flex cursor-pointer select-none items-center gap-1.5 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150">
-        <CaretDown size={12} weight="bold" className="transition-transform duration-200 group-open:rotate-180" />
-        {isResearch ? "Research sources and exact notes" : "Sources used"} ({sources.length})
-      </summary>
+    <section aria-label="Cited law" className="mt-4 border-t border-[var(--line)] pt-3">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+        Cited law
+      </h3>
       <ul className="mt-2 space-y-1.5">
         {sources.map((s) => (
-          <SourceItem key={s.label} s={s} />
+          <SourceItem key={s.label} s={s} focus={focus} />
         ))}
       </ul>
-    </details>
+    </section>
   );
 }

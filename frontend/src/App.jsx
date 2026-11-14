@@ -163,7 +163,9 @@ function Workspace({ onHome, initialMode = "Advice" }) {
     try {
       const data = await streamChat(
         { message: question, mode: MODE_TO_API[mode] },
-        setStage,
+        // Merge, so the sections found during search stay listed while the
+        // later steps run.
+        (data) => setStage((previous) => ({ ...previous, ...data })),
         CHAT_TIMEOUT_MS,
       );
 

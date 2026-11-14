@@ -56,7 +56,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
             style={{ boxShadow: "0 12px 36px rgba(0,0,0,0.14)" }}
           >
             <div className="px-4 py-2.5 border-b border-[var(--line)]">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70">Attach</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]">Attach</p>
             </div>
             <button
               className="flex items-center gap-3 px-4 py-3 w-full text-left hover:bg-[var(--olive)]/[0.04] transition-colors group"
@@ -67,7 +67,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
               </div>
               <div className="min-w-0">
                 <span className="text-sm font-medium text-[var(--ink)]/80 block">Document</span>
-                <span className="text-[10px] text-[var(--ink-muted)]/70">PDF or TXT, for clause analysis</span>
+                <span className="text-[10px] text-[var(--ink-muted)]">PDF or TXT, for clause analysis</span>
               </div>
             </button>
           </div>
@@ -95,7 +95,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
             onInput={autoResize}
             placeholder={`Ask in ${mode} mode...`}
             rows={1}
-            className="flex-1 resize-none bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)]/60 outline-none leading-relaxed overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-1"
+            className="flex-1 resize-none bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] outline-none leading-relaxed overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-1"
             style={{ minHeight: "24px", maxHeight: "128px" }}
           />
 
@@ -111,7 +111,7 @@ export default function SearchBar({ input, setInput, mode, isTyping, onSend, onU
           </button>
         </div>
 
-        <p className="text-center text-[10px] text-[var(--ink-muted)]/65 mt-2 leading-relaxed">
+        <p className="text-center text-[10px] text-[var(--ink-muted)] mt-2 leading-relaxed">
           Vakeel AI provides general legal information, not legal advice. Consult a licensed attorney for your situation.
           <br />
           Questions are processed by third-party AI services. Leave out names, phone numbers and ID numbers.
