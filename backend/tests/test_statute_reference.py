@@ -184,3 +184,25 @@ def test_routes_dishonoured_cheque_phrasing_too():
 def test_does_not_route_ordinary_uses_of_check_or_cheque():
     assert extract_concept_references("Can you check whether my rent agreement is valid?") == []
     assert extract_concept_references("I paid the deposit by cheque and want a receipt.") == []
+
+
+def test_contract_with_a_minor_routes_to_capacity_section():
+    from app.legal.statute_reference import extract_concept_references
+
+    for query in ("I made a deal with a 16 year old. Is the contract valid?",
+                  "Is an agreement signed by a minor binding?"):
+        assert [(r.act_name, r.section_no) for r in extract_concept_references(query)] == [
+            ("The Indian Contract Act, 1872", "11")]
+    for query in ("The contractor did minor repairs but breached the agreement",
+                  "There was a minor defect in the goods under our contract",
+                  "My 16 year old son was stopped riding a bike"):
+        assert not any(r.section_no == "11" for r in extract_concept_references(query))
+
+
+def test_misleading_advert_is_not_routed_as_a_delivery_mismatch():
+    from app.legal.statute_reference import extract_concept_references
+
+    advert = "An online shop advertised a product with features it doesn't have. Can anything be done?"
+    assert extract_concept_references(advert) == []
+    delivered = "The seller delivered a different model from the one described in the listing."
+    assert [r.section_no for r in extract_concept_references(delivered)][:1] == ["15"]

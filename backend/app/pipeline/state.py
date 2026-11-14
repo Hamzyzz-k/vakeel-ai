@@ -62,6 +62,9 @@ class LegalQueryState:
     # -- intake (LLM call 1) ---------------------------------------------
     jurisdiction: dict[str, Any] = field(default_factory=lambda: {"country": "India", "state": None})
     legal_domain: str | None = None
+    # Every loaded domain the intake model named (legal_domain is the
+    # first); retrieval searches all of them.
+    legal_domains: list[str] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
     facts: list[str] = field(default_factory=list)
     missing_information: list[str] = field(default_factory=list)

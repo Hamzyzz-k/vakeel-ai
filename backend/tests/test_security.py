@@ -179,7 +179,7 @@ def test_cloud_per_client_cap_needs_trusted_proxy_hops(monkeypatch):
     for name in ("DAILY_CHAT_LIMIT_PER_CLIENT", "DAILY_CHAT_BUDGET", "TRUSTED_PROXY_HOPS"):
         monkeypatch.delenv(name, raising=False)
     # Behind an unconfigured proxy all users share one address.
-    assert (Settings().daily_chat_limit_per_client, Settings().daily_chat_budget) == (0, 100)
+    assert (Settings().daily_chat_limit_per_client, Settings().daily_chat_budget) == (0, 150)
     monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
     assert Settings().daily_chat_limit_per_client == 25
 

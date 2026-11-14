@@ -123,6 +123,12 @@ _DESCRIPTION_MISMATCH = re.compile(
     r"|\bbut\b.{0,100}\bdescription\b",
     re.IGNORECASE,
 )
+# The route is about goods that arrived different from their description.
+# Without this, "an online shop advertised features the product doesn't
+# have" (a misleading-advertisement question) was routed to SoGA s.15.
+_GOODS_RECEIVED = re.compile(
+    r"\b(?:deliver\w*|receiv\w*|got|sent|ship\w*|arrived|came|bought|purchased|ordered)\b", re.IGNORECASE,
+)
 _MIXED_DELIVERY = re.compile(r"\bmixed with\b|\bmixed goods\b|\baccept .* reject the rest\b", re.IGNORECASE)
 _GOODS_NON_DELIVERY = re.compile(
     r"\b(?:supplier|seller|vendor)\b.{0,100}\b(?:missed|failed|refused|neglected|late|did(?:n['’]t| not))\b.{0,60}\b(?:deliver|delivery)\b"
@@ -168,6 +174,13 @@ _DRUNK_DRIVING = re.compile(r"\b(?:drunk driving|drink and driv(?:e|ing)|driving
 _PUC_OR_EMISSION = re.compile(r"\b(?:puc|pollution certificate|emission(?:s)?(?: certificate| test)?)\b", re.IGNORECASE)
 _UNREGISTERED_VEHICLE = re.compile(r"\b(?:without|no|expired)\b.{0,45}\b(?:registration|r\.?c\.?)\b|\bunregistered vehicle\b", re.IGNORECASE)
 _NO_DRIVING_LICENCE = re.compile(r"\b(?:without|no|expired)\b.{0,45}\bdriving licen[cs]e\b", re.IGNORECASE)
+_CONTRACT_WORD = re.compile(r"\b(?:contract|agreement|deal|promise|signed)\b", re.IGNORECASE)
+# A party who is a minor, not "minor repairs" or "a minor defect".
+_MINOR_PARTY = re.compile(
+    r"\b(?:a|with|is|was|by|from|to)\s+(?:a\s+)?minor\b(?!\s+(?:repairs?|defects?|changes?|damage|issue|breach|delay))"
+    r"|\b(?:[1-9]|1[0-7])[- ]?(?:years?|yr)[- ]old\b|\bunder(?:-| )?age\b|\bunder 18\b",
+    re.IGNORECASE,
+)
 _ACCIDENT_COMPENSATION = re.compile(r"\b(?:motor|road|vehicle|bike|car)\b.{0,80}\baccident\b.{0,100}\b(?:compensation|claim|damages)\b|\b(?:compensation|claim|damages)\b.{0,100}\b(?:motor|road|vehicle|bike|car)\b.{0,80}\baccident\b", re.IGNORECASE)
 
 
@@ -183,6 +196,7 @@ def extract_concept_references(query: str) -> list[StatuteReference]:
     if (
         _SALE_BY_DESCRIPTION.search(query)
         and _DESCRIPTION_MISMATCH.search(query)
+        and _GOODS_RECEIVED.search(query)
         and not _MIXED_DELIVERY.search(query)
     ):
         # S15 establishes the description condition; S13 controls when its
@@ -239,6 +253,11 @@ def extract_concept_references(query: str) -> list[StatuteReference]:
                 StatuteReference("The Motor Vehicles Act, 1988", "56"),
                 StatuteReference("The Central Motor Vehicles Rules, 1989", "62", "rule"),
             ])
+    if _CONTRACT_WORD.search(query) and _MINOR_PARTY.search(query):
+        # S11 decides capacity, but says "age of majority" and never
+        # "minor", so search alone didn't find it for "a deal with a
+        # 16 year old" (measured in app/eval/lay_quality.py).
+        references.append(StatuteReference("The Indian Contract Act, 1872", "11"))
     if _HELMET.search(query):
         references.extend([
             StatuteReference("The Motor Vehicles Act, 1988", "129"),
