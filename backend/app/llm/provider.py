@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
 import time
 from dataclasses import dataclass
 
@@ -30,7 +32,33 @@ class AllProvidersFailed(RuntimeError):
     in a legal system is worse than an explicit failure."""
 
 
-GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
+class DailyLimitReached(RuntimeError):
+    """A provider's daily quota is used up (not its per-minute one)."""
+
+    def __init__(self, message: str, wait_seconds: float):
+        super().__init__(message)
+        self.wait_seconds = wait_seconds
+
+
+# Groq's 429 body names the window: "...on tokens per day (TPD): Limit
+# 200000, Used ... Please try again in 7m12.5s."
+_DAILY_LIMIT = re.compile(r"per day|\((?:TPD|RPD)\)", re.IGNORECASE)
+_TRY_AGAIN = re.compile(r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", re.IGNORECASE)
+# Process-wide, so every LLMProvider instance (with_order siblings
+# included) skips a model whose daily quota is spent.
+_cooldown_until: dict[str, float] = {}
+_cooldown_lock = threading.Lock()
+
+
+def _wait_seconds(body: str) -> float:
+    match = _TRY_AGAIN.search(body)
+    if not match or not any(match.groups()):
+        return 600.0
+    hours, minutes, seconds = (float(part) if part else 0.0 for part in match.groups())
+    return min(3600.0, max(30.0, hours * 3600 + minutes * 60 + seconds))
+
+
+GEMINI_INTERACTIONS_ENDPOINT ="https://generativelanguage.googleapis.com/v1beta/interactions"
 GROQ_CHAT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -185,6 +213,15 @@ class LLMProvider:
                 return text
             except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
                 last_error = exc
+                if (
+                    isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+                    and _DAILY_LIMIT.search(exc.response.text)
+                ):
+                    # A per-minute 429 clears in seconds and is worth one
+                    # retry; a daily one won't clear for minutes or hours.
+                    raise DailyLimitReached(
+                        f"Groq {model} daily limit reached", _wait_seconds(exc.response.text),
+                    ) from exc
                 retryable_status = isinstance(exc, httpx.HTTPStatusError) and (
                     exc.response.status_code == 429 or exc.response.status_code >= 500
                 )
@@ -240,6 +277,13 @@ class LLMProvider:
                 if cached is not None:
                     return LLMResponse(text=cached, provider=provider, model=model, from_cache=True)
 
+            key = f"{provider}:{model}"
+            with _cooldown_lock:
+                resting = _cooldown_until.get(key, 0.0) > time.monotonic()
+            if resting:
+                errors.append(f"{entry}: daily limit reached, skipped")
+                continue
+
             try:
                 if provider == "gemini":
                     text = self._call_gemini(prompt, json_schema, model)
@@ -249,6 +293,14 @@ class LLMProvider:
                     text = self._call_ollama(prompt, json_schema, model)
                 else:
                     raise ValueError(f"Unknown provider {provider!r}")
+            except DailyLimitReached as exc:
+                # Skip this model until its quota frees up, instead of paying
+                # a failed call on every request until then.
+                with _cooldown_lock:
+                    _cooldown_until[key] = time.monotonic() + exc.wait_seconds
+                logger.warning("LLM provider %s hit its daily limit; skipping it for %.0fs", entry, exc.wait_seconds)
+                errors.append(f"{entry}: {exc}")
+                continue
             except Exception as exc:  # noqa: BLE001 -- failover is the whole point
                 logger.warning("LLM provider %s failed: %s", entry, exc)
                 errors.append(f"{entry}: {exc}")

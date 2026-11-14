@@ -181,6 +181,7 @@ CASES = (
 )
 
 _ID_PREFIX = "indiacode:"
+INTAKE_PAUSE_SECONDS = 8
 
 
 def _split(cases, split: str):
@@ -200,9 +201,16 @@ class _SplitLLM:
 
     def __init__(self, intake: LLMProvider, rest: LLMProvider):
         self.intake, self.rest = intake, rest
+        # The support judge keeps its production chain whatever the answer
+        # model is, so verification is judged the same way as live.
+        self.judge = LLMProvider(provider_order=settings.support_judge_order)
 
     def _pick(self, prompt: str) -> LLMProvider:
-        return self.intake if prompt.startswith("You are the intake stage") else self.rest
+        if prompt.startswith("You are the intake stage"):
+            return self.intake
+        if prompt.startswith("You are checking citations"):
+            return self.judge
+        return self.rest
 
     def generate(self, prompt, json_schema=None, use_cache=True):
         return self._pick(prompt).generate(prompt, json_schema=json_schema, use_cache=use_cache)
@@ -221,6 +229,11 @@ def run_retrieval_suite(repo, llm, cases, vectors: bool) -> list[dict]:
             covered, reason = assess_corpus_coverage(state)
             if covered:
                 run_intake(state, llm)
+                # A fresh intake call is ~1K tokens; back-to-back ones hit
+                # Groq's 8K tokens/minute limit, and a failed intake is
+                # refused as out of coverage, which would score as a miss.
+                if any(e.step == "intake" and not e.detail.get("from_cache") for e in state.trace):
+                    time.sleep(INTAKE_PAUSE_SECONDS)
                 covered, reason = assess_corpus_coverage(state)
             if covered:
                 run_retrieval(state, repo)

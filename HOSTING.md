@@ -29,12 +29,12 @@ One-time setup (all free):
      CORS_ORIGINS=https://your-frontend.vercel.app
      TRUSTED_HOSTS=your-username-vakeel-ai.hf.space
      TRUSTED_PROXY_HOPS=1
-     LLM_PROVIDER_ORDER=groq,gemini,ollama
+     LLM_PROVIDER_ORDER=groq,groq:qwen/qwen3.8-27b,gemini,ollama
      RATE_LIMIT_REQUESTS=20
      EXPOSE_PROVIDER_ERRORS=false
      ```
    The image already sets `DEPLOY_MODE=CLOUD`, which also turns on daily
-   chat caps (25 per address once `TRUSTED_PROXY_HOPS` is set, 100 in
+   chat caps (25 per address once `TRUSTED_PROXY_HOPS` is set, 150 in
    total per UTC day) and a 7-day expiry
    on cached answers. Override them with `DAILY_CHAT_LIMIT_PER_CLIENT`,
    `DAILY_CHAT_BUDGET` and `LLM_CACHE_TTL_DAYS` if needed.

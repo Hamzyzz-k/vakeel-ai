@@ -163,8 +163,9 @@ npm run dev
 ```
 
 Copy `.env.example` to `.env`. Add `GEMINI_API_KEY` and/or `GROQ_API_KEY`; the
-default order is `groq,gemini,ollama` (Groq answered in ~5s where Gemini took
-~30s on the same queries), configurable through
+default order is `groq,groq:qwen/qwen3.8-27b,gemini,ollama` (Groq answered in
+~5s where Gemini took ~30s on the same queries; qwen is a backup for when the
+main Groq model's daily quota runs out), configurable through
 `LLM_PROVIDER_ORDER`. Then open `http://localhost:5173`.
 
 Production environment variables, separate frontend/backend deployment steps,

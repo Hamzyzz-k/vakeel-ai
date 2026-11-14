@@ -74,13 +74,17 @@ class Settings:
 
     # Groq first: measured on the same live queries, a full Advice answer
     # took ~5s on Groq vs ~30s on Gemini (Research: ~6s vs 26-56s), and
-    # retrieval plus verification add well under a second. Gemini and then
-    # local Ollama remain as fallbacks. Eval harness overrides this to force
-    # Ollama -- 500 questions x 3 calls would burn a whole daily free quota.
+    # retrieval plus verification add well under a second. Eval harness
+    # overrides this to force Ollama -- 500 questions x 3 calls would burn a
+    # whole daily free quota.
+    # qwen3.8-27b on Groq is a backup for when gpt-oss-120b's daily quota is
+    # spent (quotas are per model), ahead of Gemini's 20 requests/day. Not
+    # the primary: on 10 everyday questions it pasted statute text verbatim
+    # twice, once from an irrelevant section (app/eval/lay_quality.py).
     llm_provider_order: tuple[str, ...] = field(
         default_factory=lambda: tuple(
             provider.strip().lower()
-            for provider in os.environ.get("LLM_PROVIDER_ORDER", "groq,gemini,ollama").split(",")
+            for provider in os.environ.get("LLM_PROVIDER_ORDER", "groq,groq:qwen/qwen3.8-27b,gemini,ollama").split(",")
             if provider.strip()
         )
     )
@@ -113,8 +117,9 @@ class Settings:
     # the proxy's address and therefore one bucket (see security.client_ip).
     trusted_proxy_hops: int = field(default_factory=lambda: int(os.environ.get("TRUSTED_PROXY_HOPS", "0")))
     # Daily /chat caps per UTC day (0 = off). The free LLM tiers give
-    # roughly 50 Groq answers a day plus 20 Gemini, so in CLOUD one address
-    # gets 25 and everyone together 100 before a "limit reached" message.
+    # roughly 50 answers a day from each Groq model in the chain plus 20
+    # from Gemini, so in CLOUD one address gets 25 and everyone together
+    # 150 before a "limit reached" message.
     # The per-client default needs TRUSTED_PROXY_HOPS: without it every
     # user behind the platform proxy is one "client", and 25 questions
     # would close the site for everyone.
@@ -127,7 +132,7 @@ class Settings:
     )
     daily_chat_budget: int = field(
         default_factory=lambda: int(os.environ.get(
-            "DAILY_CHAT_BUDGET", "100" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
+            "DAILY_CHAT_BUDGET", "150" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
         ))
     )
     # Cached LLM responses embed users' questions, so in CLOUD they expire

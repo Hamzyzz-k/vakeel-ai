@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from app.pipeline.citation import has_high_impact_contradiction, lexical_overlap
+from app.pipeline.citation import _content_tokens, has_high_impact_contradiction, lexical_overlap
 from app.pipeline.state import LegalQueryState
 
 WEIGHTS = {
@@ -28,11 +28,32 @@ def _citation_support(state: LegalQueryState) -> float:
     return len(state.verified_claims) / total if total else 0.0
 
 
+def _stem_overlap(framing: str, evidence: str) -> float:
+    """Share of the framing's content words whose 6-letter stem appears in
+    the evidence ("detained" meets "detention", "coerced" meets "coercion")."""
+    framing_stems = {term[:6] for term in _content_tokens(framing)}
+    if not framing_stems:
+        return 0.0
+    evidence_stems = {term[:6] for term in _content_tokens(evidence)}
+    return len(framing_stems & evidence_stems) / len(framing_stems)
+
+
 def _source_relevance(state: LegalQueryState) -> float:
+    """How squarely the cited sources address the question.
+
+    Compared against the question AND the intake's legal framing (issues
+    and search queries), taking the best. Measured on everyday-wording
+    questions: against the user's own words alone this sat at 0.10-0.40 even
+    for answers whose every sentence was verified, so the 0.45 cap below
+    pinned nearly every score at 49 -- "my landlord won't give a receipt"
+    shares few words with "Receipt to be given for rent".
+    """
     labels = _labels_used(state)
     if not labels:
         return 0.0
     sources = state.sources_by_label()
+    framings = [state.user_query, *state.search_queries, " ".join(state.issues)]
+    framings = [framing for framing in framings if framing.strip()]
     scores = []
     for label in labels:
         source = sources.get(label)
@@ -43,7 +64,13 @@ def _source_relevance(state: LegalQueryState) -> float:
         elif source.retrieval_method == "concept_reference":
             scores.append(0.95)
         else:
-            scores.append(lexical_overlap(state.user_query, f"{source.title}\n{source.text}"))
+            evidence = f"{source.title}\n{source.text}"
+            # Half the question's own words, half the best legal framing:
+            # the framing alone would be partly circular, since the same
+            # search queries chose these sources.
+            question = max(lexical_overlap(state.user_query, evidence), _stem_overlap(state.user_query, evidence))
+            framing = max(_stem_overlap(text, evidence) for text in framings)
+            scores.append(0.5 * question + 0.5 * framing)
     return sum(scores) / len(scores) if scores else 0.0
 
 
