@@ -3,10 +3,12 @@ import {
   ArrowCounterClockwise,
   ArrowRight,
   BookOpen,
+  Check,
   Clock,
   FileText,
   Question,
   Scales,
+  SealCheck,
   Warning,
 } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
@@ -44,17 +46,68 @@ function formatSourceId(sourceId) {
   return `${ACT_NAMES[match[1]] || match[1].replaceAll("_", " ")}, ${labels[match[2]]} ${match[3]}`;
 }
 
-function renderContent(text) {
+const CITATION = /\[(S\d+(?:\s*,\s*S\d+)*)\]/g;
+
+// "[S1]" in the verified answer becomes a button that opens that exact
+// section under "Cited law", instead of an opaque bracketed code.
+function CitationMark({ label, source, onCite }) {
+  if (!source || !onCite) {
+    return <span className="mx-0.5 font-mono text-[10px] text-[var(--ink-muted)]">{label}</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onCite(label)}
+      title={source.title}
+      aria-label={`Show cited law ${label}: ${source.title}`}
+      className="mx-0.5 inline-flex -translate-y-px items-center rounded-[2px] border border-[var(--line-strong)] bg-[var(--canvas)] px-1 align-baseline font-mono text-[10px] font-medium leading-[1.4] text-[var(--ink)] transition-colors duration-150 hover:border-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+    >
+      {label}
+    </button>
+  );
+}
+
+function withCitations(line, sources, onCite) {
+  const parts = [];
+  let last = 0;
+  for (const match of line.matchAll(CITATION)) {
+    if (match.index > last) parts.push(line.slice(last, match.index));
+    match[1].split(/\s*,\s*/).forEach((label) => {
+      parts.push(
+        <CitationMark
+          key={`${match.index}-${label}`}
+          label={label}
+          source={sources?.find((s) => s.label === label)}
+          onCite={onCite}
+        />,
+      );
+    });
+    last = match.index + match[0].length;
+  }
+  parts.push(line.slice(last));
+  return parts;
+}
+
+function renderContent(text, sources, onCite) {
   return text.split("\n").map((line, i) => {
     if (IRAC_HEADERS.has(line.trim())) {
       return (
-        <div key={i} className="mt-3 first:mt-0 text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70">
+        <div key={i} className="mt-4 first:mt-0 text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]">
           {line.trim()}
         </div>
       );
     }
-    return line ? <div key={i}>{line}</div> : <div key={i} className="h-2" />;
+    return line ? <p key={i}>{withCitations(line, sources, onCite)}</p> : <div key={i} className="h-2" />;
   });
+}
+
+function sentenceCase(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+// Intake returns snake_case keys ("criminal_procedure").
+function areaLabel(domain) {
+  return sentenceCase(domain.replaceAll("_", " "));
 }
 
 function WelcomeView({ mode, onQuickPrompt }) {
@@ -104,24 +157,25 @@ function WelcomeView({ mode, onQuickPrompt }) {
 // Real pipeline stages from the streaming route, in order. Each is shown
 // only once the backend reports that it has started.
 const LIVE_STAGES = {
-  reading: ["Reading your question", "Identifying the legal issue and jurisdiction"],
-  searching: ["Searching the loaded laws", "Retrieving the strongest sections and rules"],
-  writing: ["Writing the answer", "Using only the sections found"],
-  checking: ["Checking every citation", "Removing any sentence its source doesn't support"],
+  reading: "Reading your question",
+  searching: "Searching the loaded laws",
+  writing: "Writing the answer",
+  checking: "Checking every citation",
 };
+const STAGE_ORDER = Object.keys(LIVE_STAGES);
+
+const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.05)";
 
 function WorkingStatus({ mode, stage }) {
-  if (mode === "chat" && stage && LIVE_STAGES[stage.stage]) {
-    const [label, detail] = LIVE_STAGES[stage.stage];
-    const found = stage.sources || [];
-    return (
-      <StatusBubble label={label} detail={found.length ? `Found: ${found.slice(0, 3).join("; ")}` : detail} />
-    );
+  if (mode === "chat") {
+    // Before the first event arrives the question is, truthfully, being read.
+    const current = stage && LIVE_STAGES[stage.stage] ? stage.stage : "reading";
+    return <StageList current={current} found={stage?.sources || []} />;
   }
   return <RotatingStatus mode={mode} />;
 }
 
-function StatusBubble({ label, detail }) {
+function StatusShell({ children }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -130,17 +184,62 @@ function StatusBubble({ label, detail }) {
       role="status"
       aria-live="polite"
     >
-      <div className="w-7 h-7 rounded-full bg-[var(--ink)] flex items-center justify-center flex-shrink-0">
+      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[2px] bg-[var(--ink)]">
         <Scales size={15} weight="bold" className="text-[var(--canvas)]" />
       </div>
-      <div className="rounded-3xl rounded-bl-lg border border-[var(--line)] bg-[var(--paper)] px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
-          <span className="text-xs font-semibold text-[var(--ink)]">{label}</span>
-        </div>
-        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">{detail}</p>
+      <div className="rounded-[2px] border border-[var(--line)] bg-[var(--paper)] px-4 py-3" style={{ boxShadow: CARD_SHADOW }}>
+        {children}
       </div>
     </motion.div>
+  );
+}
+
+// All four real steps at once: finished ones ticked, the current one
+// marked, the rest waiting -- so progress reads as progress.
+function StageList({ current, found }) {
+  const index = STAGE_ORDER.indexOf(current);
+  return (
+    <StatusShell>
+      <ol className="space-y-1.5">
+        {STAGE_ORDER.map((key, i) => {
+          const state = i < index ? "done" : i === index ? "current" : "pending";
+          return (
+            <li
+              key={key}
+              aria-current={state === "current" ? "step" : undefined}
+              className={`flex items-center gap-2 text-xs ${
+                state === "current" ? "font-semibold text-[var(--ink)]" : "text-[var(--ink-muted)]"
+              }`}
+            >
+              <span className="flex h-3 w-3 items-center justify-center" aria-hidden="true">
+                {state === "done" && <Check size={12} weight="bold" className="text-[var(--ink)]" />}
+                {state === "current" && <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />}
+                {state === "pending" && <span className="h-1.5 w-1.5 rounded-full border border-[var(--stone)]" />}
+              </span>
+              {LIVE_STAGES[key]}
+              <span className="sr-only">{state === "done" ? "(done)" : state === "pending" ? "(waiting)" : "(in progress)"}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {found.length > 0 && (
+        <p className="mt-2.5 max-w-sm border-t border-[var(--line)] pt-2 text-[11px] leading-relaxed text-[var(--ink-muted)]">
+          Found: {found.slice(0, 3).join("; ")}
+        </p>
+      )}
+    </StatusShell>
+  );
+}
+
+function StatusBubble({ label, detail }) {
+  return (
+    <StatusShell>
+      <div className="flex items-center gap-2">
+        <span className="h-1.5 w-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
+        <span className="text-xs font-semibold text-[var(--ink)]">{label}</span>
+      </div>
+      <p className="mt-1 text-[11px] text-[var(--ink-muted)]">{detail}</p>
+    </StatusShell>
   );
 }
 
@@ -180,11 +279,11 @@ function UnverifiedNotes({ items }) {
   if (!items || items.length === 0) return null;
   return (
     <details className="group mt-3 border-t border-[var(--line)] pt-3">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]/75 hover:text-[var(--ink-muted)]">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)] hover:text-[var(--ink-muted)]">
         <Warning size={15} weight="bold" />
         Not verified against the loaded law ({items.length})
       </summary>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ink-muted)]/80">
+      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ink-muted)]">
         The model also wrote these, but none of the cited sections states them. Treat them as unchecked suggestions.
       </p>
       <ul className="mt-1.5 space-y-1 text-xs leading-relaxed text-[var(--ink-muted)]">
@@ -196,7 +295,7 @@ function UnverifiedNotes({ items }) {
 
 function AbstainNotice({ reason }) {
   return (
-    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
+    <div className="mt-2.5 flex items-start gap-2 rounded-[2px] border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
       <Warning size={15} weight="fill" className="mt-0.5 shrink-0" />
       <div>
         <span className="font-medium">Reliability safeguard applied. </span>
@@ -210,12 +309,12 @@ function MissingInformation({ items }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="mt-3 border-t border-[var(--line)] pt-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]/75">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
         <Question size={15} weight="bold" />
         To make this answer specific
       </div>
       <ul className="mt-1.5 space-y-1 text-xs leading-relaxed text-[var(--ink-muted)]">
-        {items.slice(0, 4).map((item, index) => <li key={index}>— {item}</li>)}
+        {items.slice(0, 4).map((item, index) => <li key={index}>— {sentenceCase(item)}</li>)}
       </ul>
     </div>
   );
@@ -224,7 +323,7 @@ function MissingInformation({ items }) {
 function GenerationNotice({ mode }) {
   if (mode !== "extractive_fallback") return null;
   return (
-    <div className="mt-2.5 flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs leading-relaxed text-[var(--ink-muted)]">
+    <div className="mt-2.5 flex items-start gap-2 rounded-[2px] border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs leading-relaxed text-[var(--ink-muted)]">
       <BookOpen size={15} weight="bold" className="mt-0.5 shrink-0" />
       <span><span className="font-semibold">Source-only mode.</span> The language model was unavailable for this response, so the app is showing exact retrieved law instead of guessing.</span>
     </div>
@@ -236,7 +335,7 @@ function ConflictNotice({ conflicts }) {
   return (
     <div className="mt-2.5 space-y-1.5">
       {conflicts.map((c, i) => (
-        <div key={i} className="flex items-start gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
+        <div key={i} className="flex items-start gap-2 rounded-[2px] border border-[var(--line-strong)] bg-[var(--canvas)] px-3 py-2 text-xs text-[var(--ink-muted)]">
           <Warning size={15} weight="fill" className="mt-0.5 shrink-0" />
           <div>
             <span className="font-medium">Conflicting authority: </span>
@@ -254,8 +353,8 @@ function TemporalNotes({ notes }) {
   return (
     <div className="mt-2.5 space-y-1.5">
       {notes.map((n, i) => (
-        <div key={i} className="flex items-start gap-2 rounded-xl border border-[var(--line)] bg-[var(--olive)]/[0.025] px-3 py-2 text-xs text-[var(--ink-muted)]">
-          <Clock size={15} weight="bold" className="mt-0.5 shrink-0 text-[var(--ink-muted)]/70" />
+        <div key={i} className="flex items-start gap-2 rounded-[2px] border border-[var(--line)] bg-[var(--olive)]/[0.025] px-3 py-2 text-xs text-[var(--ink-muted)]">
+          <Clock size={15} weight="bold" className="mt-0.5 shrink-0 text-[var(--ink-muted)]" />
           <span>{n}</span>
         </div>
       ))}
@@ -272,7 +371,7 @@ function DocumentAnalysisCard({ analysis }) {
       </p>
       {analysis.detected_topics.length > 0 && (
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70 mb-1">Covered</p>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)] mb-1">Covered</p>
           <div className="flex flex-wrap gap-1.5">
             {analysis.detected_topics.map((t) => (
               <span key={t} className="rounded-full border border-[var(--line-strong)] bg-[var(--canvas)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
@@ -284,7 +383,7 @@ function DocumentAnalysisCard({ analysis }) {
       )}
       {analysis.missing_topics.length > 0 && (
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)]/70 mb-1">Not addressed</p>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)] mb-1">Not addressed</p>
           <div className="flex flex-wrap gap-1.5">
             {analysis.missing_topics.map((t) => (
               <span key={t} className="rounded-full border border-[var(--line-strong)] bg-[var(--canvas)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
@@ -300,13 +399,13 @@ function DocumentAnalysisCard({ analysis }) {
         </summary>
         <ul className="mt-2 space-y-1.5">
           {analysis.clauses.map((c, i) => (
-            <li key={i} className="rounded-xl border border-[var(--line)] bg-[var(--olive)]/[0.025] px-3 py-2 text-xs">
+            <li key={i} className="rounded-[2px] border border-[var(--line)] bg-[var(--olive)]/[0.025] px-3 py-2 text-xs">
               <div className="font-medium text-[var(--ink)]/80">
                 {c.heading || (c.number ? `Clause ${c.number}` : "Clause")}
               </div>
-              <div className="mt-0.5 text-[var(--ink-muted)]/80 line-clamp-2">{c.text}</div>
+              <div className="mt-0.5 text-[var(--ink-muted)] line-clamp-2">{c.text}</div>
               {c.detected_topics.length > 0 && (
-                <div className="mt-1 text-[var(--ink-muted)]/70">{c.detected_topics.join(", ")}</div>
+                <div className="mt-1 text-[var(--ink-muted)]">{c.detected_topics.join(", ")}</div>
               )}
               {c.relevant_source_ids?.length > 0 && (
                 <div className="mt-2 border-t border-[var(--line)] pt-2 text-[11px] text-[var(--ink-muted)]">
@@ -333,7 +432,7 @@ function MessageBubble({ msg, onRetry }) {
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         className="flex justify-end"
       >
-        <div className="max-w-[88%] px-4 py-3 text-sm leading-relaxed bg-[var(--olive-dark)] text-[var(--ivory)] rounded-3xl rounded-br-lg sm:max-w-[72%]">
+        <div className="max-w-[88%] rounded-[2px] bg-[var(--olive-dark)] px-4 py-3 text-sm leading-relaxed text-[var(--ivory)] sm:max-w-[72%]">
           {msg.text}
         </div>
       </motion.div>
@@ -347,15 +446,15 @@ function MessageBubble({ msg, onRetry }) {
         animate={{ opacity: 1, y: 0 }}
         className="flex justify-start items-end gap-2.5"
       >
-        <div className="w-7 h-7 rounded-full bg-[var(--olive)] flex items-center justify-center flex-shrink-0 mb-0.5">
+        <div className="mb-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[2px] bg-[var(--olive)]">
           <Scales size={15} weight="bold" className="text-white" />
         </div>
-        <div className="max-w-[80%] px-4 py-3 text-sm bg-[var(--canvas)] border border-[var(--line-strong)] text-[var(--ink)] rounded-3xl rounded-bl-lg">
+        <div className="max-w-[80%] rounded-[2px] border border-[var(--line-strong)] bg-[var(--canvas)] px-4 py-3 text-sm text-[var(--ink)]">
           <p>{msg.error}</p>
           {onRetry && (
             <button
               onClick={onRetry}
-              className="mt-2 flex items-center gap-1.5 rounded-md border border-[var(--line-strong)] px-2.5 py-1 text-xs font-medium text-[var(--ink)] hover:bg-[var(--taupe)] transition-colors duration-150"
+              className="mt-2 flex items-center gap-1.5 rounded-[2px] border border-[var(--line-strong)] px-2.5 py-1 text-xs font-medium text-[var(--ink)] hover:bg-[var(--taupe)] transition-colors duration-150"
             >
               <ArrowCounterClockwise size={13} weight="bold" /> Retry
             </button>
@@ -365,51 +464,76 @@ function MessageBubble({ msg, onRetry }) {
     );
   }
 
+  return <AnswerCard msg={msg} />;
+}
+
+// The answer's own status line: only claimed when it's true -- the shown
+// text is built solely from sentences that passed the citation check.
+function CheckedLine({ msg }) {
+  if (msg.abstained || msg.generation_mode === "extractive_fallback" || !msg.sources?.length) return null;
+  const sections = msg.sources.length;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <SealCheck size={13} weight="fill" className="text-[var(--ink)]" aria-hidden="true" />
+      Each citation checked against the law it cites ({sections} section{sections === 1 ? "" : "s"})
+    </span>
+  );
+}
+
+function AnswerCard({ msg }) {
+  const [focus, setFocus] = useState(null);
+  const isDocument = msg.isDocumentAnalysis;
+  // A fresh object each click, so citing the same section twice re-opens it.
+  const onCite = (label) => setFocus({ label });
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-      className="flex justify-start items-end gap-2.5"
+      className="flex justify-start items-start gap-2.5"
     >
-      <div className="w-7 h-7 rounded-full bg-[var(--olive)] flex items-center justify-center flex-shrink-0 mb-0.5">
-        {msg.isDocumentAnalysis ? (
+      <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[2px] bg-[var(--olive)]">
+        {isDocument ? (
           <FileText size={15} weight="bold" className="text-white" />
         ) : (
           <Scales size={15} weight="bold" className="text-white" />
         )}
       </div>
-      <div className="flex max-w-[calc(100%-2.4rem)] flex-col items-start sm:max-w-[85%]">
-        {msg.mode && !msg.isDocumentAnalysis && (
-          <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-muted)] mb-1.5 px-2.5 py-0.5 border border-[var(--line)] rounded-full bg-[var(--paper)]">
-            {msg.mode === "Research" ? "Research note" : "Advice reply"}
-          </span>
+      <article
+        className="w-full max-w-[calc(100%-2.4rem)] rounded-[2px] border border-[var(--line)] bg-[var(--paper)] px-4 py-3.5 text-sm leading-relaxed text-[var(--ink)] sm:max-w-[85%] sm:px-5"
+        style={{ boxShadow: CARD_SHADOW }}
+      >
+        {isDocument ? (
+          <DocumentAnalysisCard analysis={msg.analysis} />
+        ) : (
+          <>
+            {msg.mode && (
+              <header className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--ink-muted)]">
+                <span className="font-semibold text-[var(--ink)]">{msg.mode === "Research" ? "Research note" : "Advice"}</span>
+                {!msg.abstained && msg.sources?.length > 0 && <span aria-hidden="true">·</span>}
+                <CheckedLine msg={msg} />
+              </header>
+            )}
+            <div className="space-y-1 text-[14.5px] leading-[1.65]">{renderContent(msg.text, msg.sources, onCite)}</div>
+            <GenerationNotice mode={msg.generation_mode} />
+            {msg.abstained && <AbstainNotice reason={msg.abstain_reason} />}
+            <ConflictNotice conflicts={msg.conflicts} />
+            <TemporalNotes notes={msg.temporal_notes} />
+            <SourcePanel sources={msg.sources} focus={focus} />
+            {!msg.abstained && <UnverifiedNotes items={msg.unverified} />}
+            {!msg.abstained && <MissingInformation items={msg.missing_information} />}
+            {msg.legal_domain && (
+              <footer className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-[var(--ink-muted)]">
+                <span className="rounded-[2px] border border-[var(--line)] px-2 py-0.5">{areaLabel(msg.legal_domain)}</span>
+                {msg.jurisdiction?.state && (
+                  <span className="rounded-[2px] border border-[var(--line)] px-2 py-0.5">{msg.jurisdiction.state}, India</span>
+                )}
+              </footer>
+            )}
+          </>
         )}
-        <div className="px-4 py-3 text-sm leading-relaxed bg-[var(--paper)] border border-[var(--line)] text-[var(--ink)] rounded-3xl rounded-bl-lg shadow-sm w-full">
-          {msg.isDocumentAnalysis ? (
-            <DocumentAnalysisCard analysis={msg.analysis} />
-          ) : (
-            <>
-              <div>{renderContent(msg.text)}</div>
-              <GenerationNotice mode={msg.generation_mode} />
-              {msg.abstained && <AbstainNotice reason={msg.abstain_reason} />}
-              <ConflictNotice conflicts={msg.conflicts} />
-              <TemporalNotes notes={msg.temporal_notes} />
-              {!msg.abstained && <MissingInformation items={msg.missing_information} />}
-              {!msg.abstained && <UnverifiedNotes items={msg.unverified} />}
-              <SourcePanel sources={msg.sources} mode={msg.mode} />
-              {msg.legal_domain && (
-                <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-[var(--ink-muted)]/80">
-                  <span className="rounded-full border border-[var(--line)] px-2 py-0.5 capitalize">{msg.legal_domain}</span>
-                  {msg.jurisdiction?.state && (
-                    <span className="rounded-full border border-[var(--line)] px-2 py-0.5">{msg.jurisdiction.state}, India</span>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
+      </article>
     </motion.div>
   );
 }
