@@ -16,7 +16,8 @@ from app.api.coverage import router as coverage_router
 from app.api.documents import router as documents_router
 from app.api.research import router as research_router
 from app.config import settings
-from app.security import DailyQuotaMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from app.api.session import router as session_router
+from app.security import DailyQuotaMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware, SessionGateMiddleware
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -38,6 +39,9 @@ app.add_middleware(
     total=settings.daily_chat_budget,
     trusted_proxy_hops=settings.trusted_proxy_hops,
 )
+# Between the two limiters: requests without a passed bot check are
+# turned away before they can spend the daily allowance.
+app.add_middleware(SessionGateMiddleware, enabled=bool(settings.turnstile_secret_key))
 app.add_middleware(
     RateLimitMiddleware,
     max_requests=settings.rate_limit_requests,
@@ -50,7 +54,7 @@ app.add_middleware(
     allow_origins=list(settings.cors_origins),
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Session-Token"],
 )
 
 
@@ -82,6 +86,7 @@ app.include_router(chat_router)
 app.include_router(coverage_router)
 app.include_router(research_router)
 app.include_router(documents_router)
+app.include_router(session_router)
 
 
 @app.get("/api/v1/health")

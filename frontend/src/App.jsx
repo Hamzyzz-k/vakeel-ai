@@ -7,7 +7,7 @@ import SearchBar from "./components/SearchBar.jsx";
 import ChatArea from "./components/ChatArea.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import { useIsMobile } from "./hooks/useIsMobile.js";
-import { fetchWithTimeout, RequestTimeoutError, streamChat } from "./lib/api.js";
+import { fetchWithSession, fetchWithTimeout, RequestTimeoutError, streamChat } from "./lib/api.js";
 
 const STORAGE_KEY = "vakeel_conversations_v1";
 const MODE_TO_API = { Advice: "advice", Research: "research" };
@@ -234,7 +234,7 @@ function Workspace({ onHome, initialMode = "Advice" }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetchWithTimeout("/api/v1/documents/upload", { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
+      const res = await fetchWithSession("/api/v1/documents/upload", { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server responded ${res.status}`);
@@ -319,6 +319,10 @@ function Workspace({ onHome, initialMode = "Advice" }) {
           onQuickPrompt={onQuickPrompt}
           onRetry={retry}
         />
+
+        {/* Cloudflare's bot check renders here, and only shows itself in
+            the rare case it needs a click (see lib/api.js). */}
+        <div id="turnstile-slot" className="flex justify-center empty:hidden" />
 
         <SearchBar
           input={input}

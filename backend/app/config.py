@@ -137,6 +137,15 @@ class Settings:
             "LLM_CACHE_TTL_DAYS", "7" if os.environ.get("DEPLOY_MODE") == "CLOUD" else "0"
         ))
     )
+    # Cloudflare Turnstile bot check (free). Unset = off: chat and upload
+    # need no session. Set = a browser must pass the check once
+    # (POST /api/v1/session) and send the returned session token with each
+    # expensive request, so scripts can't spend the free LLM quotas.
+    turnstile_secret_key: str | None = field(default_factory=lambda: os.environ.get("TURNSTILE_SECRET_KEY") or None)
+    # Signs session tokens. Unset = a random key per process, which only
+    # means sessions end (and the check runs again) when the server restarts.
+    session_signing_key: str | None = field(default_factory=lambda: os.environ.get("SESSION_SIGNING_KEY") or None)
+    session_ttl_seconds: int = field(default_factory=lambda: int(os.environ.get("SESSION_TTL_SECONDS", "7200")))
     expose_provider_errors: bool = field(
         default_factory=lambda: _env_bool("EXPOSE_PROVIDER_ERRORS", os.environ.get("DEPLOY_MODE", "LOCAL") == "LOCAL")
     )
