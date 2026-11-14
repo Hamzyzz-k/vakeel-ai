@@ -1,7 +1,10 @@
 """Small deployment-security middleware with no external state dependency."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import secrets
 import threading
 import time
 from collections import defaultdict, deque
@@ -71,7 +74,7 @@ class RateLimitMiddleware:
     replace it with a shared Redis/API-gateway limiter.
     """
 
-    LIMITED_PATHS = frozenset({"/api/v1/chat", "/api/v1/chat/stream", "/api/v1/documents/upload"})
+    LIMITED_PATHS = frozenset({"/api/v1/chat", "/api/v1/chat/stream", "/api/v1/documents/upload", "/api/v1/session"})
     _SWEEP_ABOVE = 1024
 
     def __init__(self, app, max_requests: int, window_seconds: int, trusted_proxy_hops: int = 0):
@@ -188,3 +191,66 @@ class DailyQuotaMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+
+# -- bot check sessions ------------------------------------------------------
+
+def _session_key() -> bytes:
+    from app.config import settings
+
+    global _RANDOM_SESSION_KEY
+    if settings.session_signing_key:
+        return settings.session_signing_key.encode("utf-8")
+    if _RANDOM_SESSION_KEY is None:
+        _RANDOM_SESSION_KEY = secrets.token_bytes(32)
+    return _RANDOM_SESSION_KEY
+
+
+_RANDOM_SESSION_KEY: bytes | None = None
+
+
+def issue_session(ttl_seconds: int, now: float | None = None) -> str:
+    """A stateless token: its expiry time plus an HMAC of it. Nothing about
+    the user is stored or encoded."""
+    expires = int((now if now is not None else time.time()) + ttl_seconds)
+    signature = hmac.new(_session_key(), str(expires).encode(), hashlib.sha256).hexdigest()
+    return f"{expires}.{signature}"
+
+
+def session_is_valid(token: str | None, now: float | None = None) -> bool:
+    if not token or "." not in token:
+        return False
+    expires, _, signature = token.partition(".")
+    if not expires.isdigit():
+        return False
+    expected = hmac.new(_session_key(), expires.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected) and int(expires) > (now if now is not None else time.time())
+
+
+class SessionGateMiddleware:
+    """When Turnstile is configured, expensive POSTs need a session token
+    from POST /api/v1/session (a passed bot check). A missing or expired
+    token gets a 401 the frontend answers by running the check again."""
+
+    GATED_PATHS = frozenset({"/api/v1/chat", "/api/v1/chat/stream", "/api/v1/documents/upload"})
+
+    def __init__(self, app, enabled: bool):
+        self.app = app
+        self.enabled = enabled
+
+    async def __call__(self, scope, receive, send):
+        if (
+            not self.enabled or scope["type"] != "http" or scope["method"] != "POST"
+            or scope["path"] not in self.GATED_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+        token = next((value.decode("latin-1") for name, value in scope.get("headers", []) if name == b"x-session-token"), None)
+        if session_is_valid(token):
+            await self.app(scope, receive, send)
+            return
+        response = JSONResponse(
+            {"detail": "Please complete the quick verification and try again.", "code": "session_required"},
+            status_code=401,
+        )
+        await response(scope, receive, send)

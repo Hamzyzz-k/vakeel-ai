@@ -37,10 +37,14 @@ export async function streamChat(body, onStage, timeoutMs) {
     body: JSON.stringify(body),
     signal: controller.signal,
   };
+  const post = (path) => withSession((extra) => fetch(apiUrl(path), {
+    ...request,
+    headers: { ...request.headers, ...extra },
+  }));
   try {
-    let res = await fetch(apiUrl("/api/v1/chat/stream"), request);
+    let res = await post("/api/v1/chat/stream");
     if (res.status === 404 || res.status === 405) {
-      res = await fetch(apiUrl("/api/v1/chat"), request);
+      res = await post("/api/v1/chat");
       if (!res.ok) throw await responseError(res);
       return await res.json();
     }
@@ -84,4 +88,82 @@ async function responseError(res) {
   // Limit messages (429) carry a readable detail; show it, not the code.
   const body = await res.json().catch(() => ({}));
   return new Error(body.detail || `Server responded ${res.status}`);
+}
+
+// Cloudflare Turnstile bot check. Off unless VITE_TURNSTILE_SITE_KEY is set
+// at build time (the backend is off too until it has the secret key). When
+// on, one passed check buys a session token that chat and upload send in
+// X-Session-Token; a 401 means it expired, so the check runs again.
+const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+const TURNSTILE_SCRIPT = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+let session = null;
+let turnstileLoader = null;
+
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  if (!turnstileLoader) {
+    turnstileLoader = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = TURNSTILE_SCRIPT;
+      script.async = true;
+      script.onload = () => resolve(window.turnstile);
+      script.onerror = () => {
+        turnstileLoader = null;
+        reject(new Error("The verification check couldn't load. Check your connection and try again."));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return turnstileLoader;
+}
+
+// Renders into #turnstile-slot. "interaction-only" keeps the widget hidden
+// unless Cloudflare needs the visitor to click, which is rare.
+async function solveTurnstile() {
+  const turnstile = await loadTurnstile();
+  const slot = document.getElementById("turnstile-slot");
+  if (!slot) throw new Error("The verification check couldn't start.");
+  return new Promise((resolve, reject) => {
+    let widgetId = null;
+    const finish = (settle) => {
+      if (widgetId !== null) setTimeout(() => turnstile.remove(widgetId), 0);
+      settle();
+    };
+    widgetId = turnstile.render(slot, {
+      sitekey: turnstileSiteKey,
+      appearance: "interaction-only",
+      callback: (token) => finish(() => resolve(token)),
+      "error-callback": () => finish(() => reject(new Error("Verification failed. Please try again."))),
+      "timeout-callback": () => finish(() => reject(new Error("Verification timed out. Please try again."))),
+    });
+  });
+}
+
+async function ensureSession(force = false) {
+  if (!turnstileSiteKey) return null;
+  if (!force && session && session.expiresAt > Date.now() + 30000) return session.token;
+  const turnstileToken = await solveTurnstile();
+  const res = await fetch(apiUrl("/api/v1/session"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turnstile_token: turnstileToken }),
+  });
+  if (!res.ok) throw await responseError(res);
+  const data = await res.json();
+  session = data.required ? { token: data.session, expiresAt: Date.now() + data.expires_in * 1000 } : null;
+  return session?.token ?? null;
+}
+
+// send(extraHeaders) performs the request; retried once with a fresh
+// session if the server says the current one is missing or expired.
+async function withSession(send) {
+  const token = await ensureSession();
+  const res = await send(token ? { "X-Session-Token": token } : {});
+  if (res.status !== 401 || !turnstileSiteKey) return res;
+  session = null;
+  return send({ "X-Session-Token": await ensureSession(true) });
+}
+
+export function fetchWithSession(path, options = {}, timeoutMs) {
+  return withSession((extra) => fetchWithTimeout(path, { ...options, headers: { ...(options.headers || {}), ...extra } }, timeoutMs));
 }

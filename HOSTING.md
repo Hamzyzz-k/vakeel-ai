@@ -87,6 +87,29 @@ VITE_API_BASE_URL=https://your-username-vakeel-ai.hf.space
 headers. The workspace pings `/api/v1/health` when it opens and shows a
 "waking the server" notice if that is slow.
 
+## Bot check: Cloudflare Turnstile (optional, free)
+
+Without it, anyone can script requests and use up the free LLM quotas. With
+it, a browser passes one mostly invisible check, gets a session token from
+`POST /api/v1/session` (valid 2 hours), and sends it with every chat and
+upload; requests without one get a 401 and the page runs the check again.
+It stays off until both keys are set.
+
+1. In a free Cloudflare account, open **Turnstile** and add a widget for the
+   frontend hostnames (e.g. `vakeelai.vercel.app`), widget mode **Managed**.
+2. **Frontend first** (Vercel, production): `VITE_TURNSTILE_SITE_KEY`, then
+   redeploy. This is safe on its own: until the backend has the secret, it
+   answers that no session is needed.
+3. **Then the backend** (Render and/or the Space, as secrets):
+   `TURNSTILE_SECRET_KEY`. Optionally `SESSION_SIGNING_KEY` (any long random
+   string) so sessions survive restarts. The other order would block every
+   question until the frontend is redeployed, because a frontend without the
+   site key can't get a session.
+
+To test locally without an account, use Cloudflare's published test keys:
+site key `1x00000000000000000000AA` with secret
+`1x0000000000000000000000000000000AA` always pass.
+
 ## Free-tier limits that matter
 
 - Groq `openai/gpt-oss-120b`: 8,000 tokens/minute, 1,000 requests/day and
